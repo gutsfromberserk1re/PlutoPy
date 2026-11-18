@@ -1,0 +1,32 @@
+
+name: Build UI
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install GCC
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - name: Compile UI.c
+        shell: msys2 {0}
+        run: |
+          gcc UI.c -o UI.exe -O2 -static -static-libgcc
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: UI
+          path: UI.exe
