@@ -14,6 +14,38 @@
 #define CLAY_IMPLEMENTATION
 #include "clay.h"
 #include "raylib.h"
+
+/* ------------------------------------------------------------------ */
+/* Compatibility helpers: this UI was authored with the legacy        */
+/* CLAY(id, { config }) / CLAY_AUTO_ID({ config }) call style.         */
+/* Clay v0.14 uses CLAY({ .id = id, ... }), so adapt the old calls here. */
+/* ------------------------------------------------------------------ */
+static uint32_t gClayAutoId = 0;
+
+static Clay_ElementDeclaration ClayCompatDeclaration(
+    Clay_ElementId id,
+    Clay_ElementDeclaration declaration
+) {
+    declaration.id = id;
+    return declaration;
+}
+
+#undef CLAY
+#define CLAY(id, ...) \
+    for ( \
+        CLAY__ELEMENT_DEFINITION_LATCH = ( \
+            Clay__OpenElement(), \
+            Clay__ConfigureOpenElement( \
+                ClayCompatDeclaration((id), (Clay_ElementDeclaration)__VA_ARGS__) \
+            ), \
+            0 \
+        ); \
+        CLAY__ELEMENT_DEFINITION_LATCH < 1; \
+        CLAY__ELEMENT_DEFINITION_LATCH = 1, Clay__CloseElement() \
+    )
+
+#define CLAY_AUTO_ID(...) \
+    CLAY(CLAY_IDI_LOCAL("PlutoAuto", gClayAutoId++), __VA_ARGS__)
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -939,6 +971,7 @@ static void Timeline(void) {
 /* frame                                                               */
 /* ------------------------------------------------------------------ */
 static Clay_RenderCommandArray BuildUI(void) {
+    gClayAutoId = 0;
     Clay_BeginLayout();
     CLAY(CLAY_ID("Root"), {.layout = {COLM, .sizing = {GROW, GROW}, .padding = {8, 8, 0, 12}, .childGap = 10}, .backgroundColor = C_BG}) {
         TopBar();
