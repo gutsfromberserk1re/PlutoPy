@@ -14,38 +14,6 @@
 #define CLAY_IMPLEMENTATION
 #include "clay.h"
 #include "raylib.h"
-
-/* ------------------------------------------------------------------ */
-/* Compatibility helpers: this UI was authored with the legacy        */
-/* CLAY(id, { config }) / CLAY_AUTO_ID({ config }) call style.         */
-/* Clay v0.14 uses CLAY({ .id = id, ... }), so adapt the old calls here. */
-/* ------------------------------------------------------------------ */
-static uint32_t gClayAutoId = 0;
-
-static Clay_ElementDeclaration ClayCompatDeclaration(
-    Clay_ElementId id,
-    Clay_ElementDeclaration declaration
-) {
-    declaration.id = id;
-    return declaration;
-}
-
-#undef CLAY
-#define CLAY(id, ...) \
-    for ( \
-        CLAY__ELEMENT_DEFINITION_LATCH = ( \
-            Clay__OpenElement(), \
-            Clay__ConfigureOpenElement( \
-                ClayCompatDeclaration((id), (Clay_ElementDeclaration)__VA_ARGS__) \
-            ), \
-            0 \
-        ); \
-        CLAY__ELEMENT_DEFINITION_LATCH < 1; \
-        CLAY__ELEMENT_DEFINITION_LATCH = 1, Clay__CloseElement() \
-    )
-
-#define CLAY_AUTO_ID(...) \
-    CLAY(CLAY_IDI_LOCAL("PlutoAuto", gClayAutoId++), __VA_ARGS__)
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -85,7 +53,7 @@ static Clay_ElementDeclaration ClayCompatDeclaration(
 #define VSPACE      CLAY_AUTO_ID({.layout = {.sizing = {.height = GROW}}}) {}
 #define GAPX(n)     CLAY_AUTO_ID({.layout = {.sizing = {.width = FIX(n), .height = FIX(1)}}}) {}
 #define PANEL       .backgroundColor = C_PANEL, .cornerRadius = CLAY_CORNER_RADIUS(16), \
-                    .border = {.color = C_PBORDER, .width = CLAY_BORDER_OUTSIDE(1)}
+                    .border = {.color = RGB(45,47,53), .width = CLAY_BORDER_OUTSIDE(1)}
 #define CARD        .backgroundColor = C_CARD, .cornerRadius = CLAY_CORNER_RADIUS(14), \
                     .border = {.color = C_CARDB, .width = CLAY_BORDER_OUTSIDE(1)}
 
@@ -122,6 +90,7 @@ static bool  gAcc[5] = {true, false, false, false, false};
 
 /* playhead is drawn after everything else so rows never cover it */
 static bool gPH; static Vector2 gPHPos; static float gPHLen;
+static bool gWindowDrag; static Vector2 gDragMouse, gDragWindow;
 
 /* ------------------------------------------------------------------ */
 /* animation table (smooth exponential easing, keyed by element id)    */
@@ -513,13 +482,20 @@ static void OnClayError(Clay_ErrorData e) { printf("Clay error: %.*s\n", e.error
 /* UI: top bar                                                         */
 /* ------------------------------------------------------------------ */
 static void TopBar(void) {
-    CLAY(CLAY_ID("TopBar"), {.layout = {.sizing = {GROW, FIX(48)}, .padding = {12, 12, 0, 0}, .childAlignment = AL_Y}}) {
-        CLAY(CLAY_ID("LeftCluster"), {.layout = {.sizing = {FIX(316), FIT}, .childAlignment = AL_Y}}) {
-            CLAY(CLAY_ID("Logo"), {.layout = {.sizing = {FIX(24), FIX(24)}}, .backgroundColor = RGB(20, 21, 25),
-                                   .cornerRadius = CLAY_CORNER_RADIUS(6), .border = {.color = RGB(64, 66, 73), .width = CLAY_BORDER_OUTSIDE(1)}}) {}
-            GAPX(14)
+    CLAY(CLAY_ID("TopBar"), {.layout = {.sizing = {GROW, FIX(46)}, .padding = {8, 10, 0, 0}, .childAlignment = AL_Y}}) {
+        CLAY(CLAY_ID("LeftCluster"), {.layout = {.sizing = {FIX(284), FIT}, .childAlignment = AL_Y}}) {
+            CLAY(CLAY_ID("Logo"), {.layout = {.sizing = {FIX(18), FIX(24)}, .childAlignment = AL_C}}) {
+                CLAY_AUTO_ID({.layout = {COLM, .sizing = {FIX(14), FIX(10)}, .childGap = 3}}) {
+                    CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIX(1)}}, .backgroundColor = C_DIM}) {}
+                    CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIX(1)}}, .backgroundColor = C_DIM}) {}
+                    CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIX(1)}}, .backgroundColor = C_DIM}) {}
+                }
+            }
+            GAPX(4)
+            CLAY_AUTO_ID({.layout = {.sizing = {FIX(1), FIX(24)}}, .backgroundColor = RGB(52, 54, 60)}) {}
+            GAPX(10)
             Tx("Pluto", 15, C_TEXT, 1);
-            GAPX(40)
+            GAPX(28)
             Tx("Untitled Project", 13, C_DIM, 0);
         }
         Clay_ElementId ex = CLAY_ID("Export");
@@ -553,7 +529,7 @@ static const MediaItem kMedia[6] = {
 static void MediaView(void) {
     Clay_ElementId sid = CLAY_ID("Search");
     Bs sb = Interact(sid);
-    CLAY(sid, {.layout = {.sizing = {GROW, FIX(38)}, .padding = {12, 12, 0, 0}, .childGap = 8, .childAlignment = AL_Y},
+    CLAY(sid, {.layout = {.sizing = {GROW, FIX(34)}, .padding = {12, 12, 0, 0}, .childGap = 8, .childAlignment = AL_Y},
                .backgroundColor = Mix(RGB(30, 31, 36), RGB(36, 37, 43), sb.hover), .cornerRadius = CLAY_CORNER_RADIUS(10)}) {
         Icon(I_SEARCH, 14, C_MUTED);
         Tx("Search media", 12, C_MUTED, 0);
@@ -566,7 +542,7 @@ static void MediaView(void) {
                 CLAY(CLAY_IDI("Media", i), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 6}}) {
                     Clay_ElementId tid = CLAY_IDI("Thumb", i);
                     Bs b = Interact(tid);
-                    CLAY(tid, {.layout = {.sizing = {GROW, FIX(66)}, .padding = {5, 5, 5, 5}, .childAlignment = {.y = CLAY_ALIGN_Y_BOTTOM}},
+                    CLAY(tid, {.layout = {.sizing = {GROW, FIX(58)}, .padding = {5, 5, 5, 5}, .childAlignment = {.y = CLAY_ALIGN_Y_BOTTOM}},
                                .custom = {.customData = NC(K_THUMB, m->sky1, m->sky2, m->mtn, 0, b.hover, m->style)}}) {
                         CLAY_AUTO_ID({.layout = {.sizing = {FIT, FIT}, .padding = {5, 5, 1, 2}},
                                       .backgroundColor = RGBA(0, 0, 0, 150), .cornerRadius = CLAY_CORNER_RADIUS(4)}) {
@@ -632,7 +608,7 @@ static void AudioView(void) {
 }
 
 static void LeftPanel(void) {
-    CLAY(CLAY_ID("Library"), {.layout = {COLM, .sizing = {FIX(242), GROW}, .padding = {12, 12, 14, 12}, .childGap = 14}, PANEL}) {
+    CLAY(CLAY_ID("Library"), {.layout = {COLM, .sizing = {FIX(220), GROW}, .padding = {12, 12, 14, 12}, .childGap = 14}, PANEL}) {
         CLAY(CLAY_ID("LibHead"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 0, 0}, .childGap = 8, .childAlignment = AL_Y}}) {
             Icon(I_LIBRARY, 18, C_DIM);
             Tx("Library", 15, C_TEXT, 1);
@@ -645,7 +621,7 @@ static void LeftPanel(void) {
                 Tx("Import", 12, C_TEXT, 0);
             }
         }
-        CLAY(CLAY_ID("LibTabs"), {.layout = {.sizing = {GROW, FIX(40)}, .padding = CLAY_PADDING_ALL(4), .childGap = 4},
+        CLAY(CLAY_ID("LibTabs"), {.layout = {.sizing = {GROW, FIX(36)}, .padding = CLAY_PADDING_ALL(4), .childGap = 4},
                                   .backgroundColor = C_SEG, .cornerRadius = CLAY_CORNER_RADIUS(12),
                                   .border = {.color = RGB(30, 32, 37), .width = CLAY_BORDER_OUTSIDE(1)}}) {
             if (TabBtn(CLAY_IDI("LibTab", 0), "Media", gLeftTab == 0, 12, 9)) gLeftTab = 0;
@@ -724,7 +700,7 @@ static void NumField(int n, const char *val, const char *unit) {
 }
 
 static void FieldCard(int n, const char *title, int icon, const char *l1, const char *l2, const char *val, const char *unit, bool linked) {
-    CLAY(CLAY_IDI("FCard", n), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(12), .childGap = 8}, CARD}) {
+    CLAY(CLAY_IDI("FCard", n), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(10), .childGap = 7}, CARD}) {
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 8, .childAlignment = AL_Y}}) {
             Icon(icon, 15, C_DIM);
             Tx(title, 13, C_TEXT, 1);
@@ -748,7 +724,7 @@ static void FieldCard(int n, const char *title, int icon, const char *l1, const 
 static void NavButton(int n, int icon, const char *label) {
     Clay_ElementId id = CLAY_IDI("Nav", n);
     Bs b = Interact(id);
-    CLAY(id, {.layout = {.sizing = {GROW, FIX(52)}, .padding = {14, 12, 0, 0}, .childGap = 10, .childAlignment = AL_Y},
+    CLAY(id, {.layout = {.sizing = {GROW, FIX(48)}, .padding = {14, 12, 0, 0}, .childGap = 10, .childAlignment = AL_Y},
               .backgroundColor = BtnBg(C_CARD, RGB(38, 40, 46), b), .cornerRadius = CLAY_CORNER_RADIUS(14),
               .border = {.color = Mix(C_CARDB, RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
         Icon(icon, 18, C_DIM);
@@ -763,7 +739,7 @@ static void TransformView(void) {
         FieldCard(0, "Position", I_POS, "X", "Y", "0", "px", false);
         FieldCard(1, "Scale", I_SCALE, "W", "H", "100", "%", true);
     }
-    CLAY(CLAY_ID("RotCard"), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(12), .childGap = 8}, CARD}) {
+    CLAY(CLAY_ID("RotCard"), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(10), .childGap = 7}, CARD}) {
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 10, .childAlignment = AL_Y}}) {
             Icon(I_ROT, 20, C_DIM);
             Tx("Rotation", 13, C_TEXT, 0);
@@ -883,12 +859,12 @@ static void RightPanel(void) {
     static const char *tabs[4] = {"Transform", "Colors", "Effects", "Text"};
     static const char *titles[4] = {"Transform", "Colors", "Effects", "Text"};
     static const int icons[4] = {I_CROP, I_PALETTE, I_SUN, I_TEXT};
-    CLAY(CLAY_ID("Right"), {.layout = {COLM, .sizing = {FIX(374), GROW}, .childGap = 10}}) {
-        CLAY(CLAY_ID("InspTabs"), {.layout = {.sizing = {GROW, FIX(52)}, .padding = CLAY_PADDING_ALL(6), .childGap = 4}, PANEL}) {
+    CLAY(CLAY_ID("Right"), {.layout = {COLM, .sizing = {FIX(340), GROW}, .childGap = 10}}) {
+        CLAY(CLAY_ID("InspTabs"), {.layout = {.sizing = {GROW, FIX(48)}, .padding = CLAY_PADDING_ALL(5), .childGap = 4}, .backgroundColor = C_PANEL, .cornerRadius = CLAY_CORNER_RADIUS(16), .border = {.color = RGB(43,45,51), .width = CLAY_BORDER_OUTSIDE(1)}}) {
             for (int i = 0; i < 4; i++)
                 if (TabBtn(CLAY_IDI("InspTab", i), tabs[i], gRightTab == i, 12, 11)) gRightTab = i;
         }
-        CLAY(CLAY_ID("InspBody"), {.layout = {COLM, .sizing = {GROW, GROW}, .padding = CLAY_PADDING_ALL(14), .childGap = 12}, PANEL}) {
+        CLAY(CLAY_ID("InspBody"), {.layout = {COLM, .sizing = {GROW, GROW}, .padding = CLAY_PADDING_ALL(12), .childGap = 10}, PANEL}) {
             CLAY(CLAY_ID("InspTitle"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 2, 4}, .childGap = 12, .childAlignment = AL_Y}}) {
                 Icon(icons[gRightTab], 22, C_DIM);
                 Tx(titles[gRightTab], 18, C_TEXT, 1);
@@ -906,8 +882,8 @@ static void Timeline(void) {
     float bodyH = Clay_GetElementData(CLAY_ID("TimeBody")).boundingBox.height;
     float extra = fmaxf(0.f, bodyH - 26.f);
 
-    CLAY(CLAY_ID("Timeline"), {.layout = {COLM, .sizing = {GROW, FIX(284)}}, PANEL}) {
-        CLAY(CLAY_ID("TlBar"), {.layout = {.sizing = {GROW, FIX(52)}, .padding = {14, 12, 0, 0}, .childGap = 4, .childAlignment = AL_Y}}) {
+    CLAY(CLAY_ID("Timeline"), {.layout = {COLM, .sizing = {GROW, FIX(260)}}, PANEL}) {
+        CLAY(CLAY_ID("TlBar"), {.layout = {.sizing = {GROW, FIX(48)}, .padding = {14, 12, 0, 0}, .childGap = 4, .childAlignment = AL_Y}}) {
             IconBtn(CLAY_ID("ToolPtr"),  I_POINTER,  36, 18, C_TEXT, true, 9);
             IconBtn(CLAY_ID("ToolHand"), I_HAND,     36, 18, C_DIM, false, 9);
             IconBtn(CLAY_ID("ToolCut"),  I_SCISSORS, 36, 18, C_DIM, false, 9);
@@ -944,20 +920,20 @@ static void Timeline(void) {
                 GAPX(60)
                 CLAY(CLAY_ID("Ruler"), {.layout = {.sizing = {GROW, GROW}}, .custom = {.customData = NC(K_RULER, C_CARD, C_CARD, C_CARD, 0, extra, 0)}}) {}
             }
-            CLAY(CLAY_ID("TrackV1"), {.layout = {.sizing = {GROW, FIX(47)}, .childAlignment = AL_Y}, .backgroundColor = C_ROW,
+            CLAY(CLAY_ID("TrackV1"), {.layout = {.sizing = {GROW, FIX(44)}, .childAlignment = AL_Y}, .backgroundColor = C_ROW,
                                       .border = {.color = RGB(32, 34, 39), .width = {.top = 1, .bottom = 1}}}) {
                 CLAY_AUTO_ID({.layout = {.sizing = {FIX(60), FIT}, .padding = {16, 0, 0, 0}, .childGap = 5, .childAlignment = AL_Y}}) {
                     Icon(I_FILM, 12, C_MUTED); Tx("V1", 11, C_MUTED, 0);
                 }
                 Clay_ElementId cid = CLAY_ID("Clip");
                 Bs cb = Interact(cid);
-                CLAY(cid, {.layout = {.sizing = {FIX(193), FIX(42)}, .padding = {10, 6, 5, 0}, .childGap = 5},
+                CLAY(cid, {.layout = {.sizing = {FIX(175), FIX(38)}, .padding = {10, 6, 5, 0}, .childGap = 5},
                            .custom = {.customData = NC(K_CLIP, RGB(112, 52, 140), RGB(78, 36, 108), C_CARD, 0, cb.hover, 0)}}) {
                     Icon(I_FILM, 11, C_TEXT);
                     Tx("City at dusk.mp4", 11, C_TEXT, 1);
                 }
             }
-            CLAY(CLAY_ID("TrackA1"), {.layout = {.sizing = {GROW, FIX(47)}, .childAlignment = AL_Y}, .backgroundColor = RGB(21, 22, 26),
+            CLAY(CLAY_ID("TrackA1"), {.layout = {.sizing = {GROW, FIX(44)}, .childAlignment = AL_Y}, .backgroundColor = RGB(21, 22, 26),
                                       .border = {.color = RGB(32, 34, 39), .width = {.bottom = 1}}}) {
                 CLAY_AUTO_ID({.layout = {.sizing = {FIX(60), FIT}, .padding = {16, 0, 0, 0}, .childGap = 5, .childAlignment = AL_Y}}) {
                     Icon(I_NOTE, 12, C_MUTED); Tx("A1", 11, C_MUTED, 0);
@@ -971,9 +947,8 @@ static void Timeline(void) {
 /* frame                                                               */
 /* ------------------------------------------------------------------ */
 static Clay_RenderCommandArray BuildUI(void) {
-    gClayAutoId = 0;
     Clay_BeginLayout();
-    CLAY(CLAY_ID("Root"), {.layout = {COLM, .sizing = {GROW, GROW}, .padding = {8, 8, 0, 12}, .childGap = 10}, .backgroundColor = C_BG}) {
+    CLAY(CLAY_ID("Root"), {.layout = {COLM, .sizing = {GROW, GROW}, .padding = {0, 8, 4, 4}, .childGap = 8}, .backgroundColor = C_BG}) {
         TopBar();
         CLAY(CLAY_ID("Main"), {.layout = {.sizing = {GROW, GROW}, .childGap = 10}}) {
             LeftPanel();
@@ -999,8 +974,8 @@ static Font TryFont(const char **paths, int n) {
 }
 
 int main(void) {
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
-    InitWindow(1600, 900, "Pluto");
+    SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
+    InitWindow(1676, 895, "Pluto");
     SetWindowMinSize(1180, 720);
 
     const char *reg[] = {"resources/Inter-Regular.ttf", "Inter-Regular.ttf", "C:/Windows/Fonts/segoeui.ttf",
@@ -1027,6 +1002,20 @@ int main(void) {
 
         gCustN = 0; gHand = false;
         Clay_RenderCommandArray cmds = BuildUI();
+
+        // Custom frameless title bar: drag the top strip to move the window.
+        Vector2 mouseNow = GetMousePosition();
+        Vector2 mouseDelta = GetMouseDelta();
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && mouseNow.y >= 2 && mouseNow.y <= 42 && mouseNow.x < 260) {
+            gWindowDrag = true;
+            gDragMouse = mouseNow;
+            gDragWindow = GetWindowPosition();
+        }
+        if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) gWindowDrag = false;
+        if (gWindowDrag && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            Vector2 wp = GetWindowPosition();
+            SetWindowPosition((int)(wp.x + mouseDelta.x), (int)(wp.y + mouseDelta.y));
+        }
 
         BeginDrawing();
         ClearBackground((Color){14, 15, 17, 255});
