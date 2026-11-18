@@ -28,7 +28,7 @@ jobs:
             -Uri "https://raw.githubusercontent.com/nicbarker/clay/v0.14/clay.h" `
             -OutFile "clay.h"
 
-      - name: Compile UI source into a standalone executable
+      - name: Compile UI into a Windows executable
         shell: msys2 {0}
         run: |
           if [ -f UI.c ]; then
@@ -37,6 +37,11 @@ jobs:
             SOURCE=pluto_ui.c
           else
             echo "Could not find UI.c or pluto_ui.c in the repository root."
+            exit 1
+          fi
+
+          if ! grep -q "ClayCompatDeclaration" "$SOURCE"; then
+            echo "The source still uses the old CLAY(id, config) syntax. Replace it with the supplied patched UI.c."
             exit 1
           fi
 
