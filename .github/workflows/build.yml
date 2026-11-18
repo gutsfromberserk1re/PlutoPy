@@ -1,5 +1,36 @@
 
-      - name: Build standalone UI.exe
+name: Build UI
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install UCRT64 build tools
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+
+      - name: Download Clay header
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/nicbarker/clay/v0.14/clay.h" -OutFile "clay.h"
+
+      - name: Download raylib
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch 6.2 https://github.com/raysan5/raylib.git raylib-src
+
+      - name: Build UI
         shell: msys2 {0}
         run: |
           set -euo pipefail
@@ -9,17 +40,17 @@
           elif [ -f pluto_ui.c ]; then
             SOURCE=pluto_ui.c
           else
-            echo "Could not find UI.c or pluto_ui.c in the repository root."
+            echo "ERROR: UI.c or pluto_ui.c not found"
             exit 1
           fi
 
-          echo "Building source: $SOURCE"
+          echo "Building $SOURCE"
 
           mkdir -p ci-build
 
           cat > ci-build/CMakeLists.txt <<'CMAKE'
           cmake_minimum_required(VERSION 3.22)
-          project(PlutoUI LANGUAGES C)
+          project(PlutoUI C)
 
           set(CMAKE_C_STANDARD 99)
           set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -34,12 +65,12 @@
           )
 
           if(NOT DEFINED UI_SOURCE_FILE)
-              message(FATAL_ERROR "UI_SOURCE_FILE was not provided")
+              message(FATAL_ERROR "UI_SOURCE_FILE missing")
           endif()
 
           add_executable(UI "${CMAKE_CURRENT_LIST_DIR}/../${UI_SOURCE_FILE}")
+
           target_link_libraries(UI PRIVATE raylib)
-          target_compile_options(UI PRIVATE -O2)
 
           if(MINGW)
               target_link_options(UI PRIVATE -static -static-libgcc -mwindows)
@@ -57,4 +88,11 @@
 
           cmake --build ci-build/out --parallel
 
-          test -s ci-build/out/dist/UI.exe
+          test -f ci-build/out/dist/UI.exe
+
+      - name: Upload UI.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: PlutoUI-Windows
+          path: ci-build/out/dist/UI.exe
+          if-no-files-found: error
