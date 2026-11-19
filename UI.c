@@ -133,6 +133,9 @@ static int   gOpenTool = -1;                          /* -1 none, 0 crop tools, 
 static float gScroll, gScrollT;                       /* inspector scroll (pixels down)   */
 static bool  gFollow;                                 /* keep pinned to bottom while expanding */
 static float gInspViewH;
+static float gTabT = 1.f;                             /* tab-switch transition 0..1 */
+static float gTabE = 1.f;                             /* eased */
+static Rectangle gFadeR; static float gFadeA;         /* fade overlay while switching */
 static bool  gSB; static Rectangle gSBR;              /* inspector scrollbar thumb */
 
 /* playhead is drawn after everything else so rows never cover it */
@@ -189,11 +192,11 @@ static Bs Interact(Clay_ElementId id) {
     if (over) gHand = true;
     Bs b;
     b.hover   = Anim(id.id, over ? 1.f : 0.f, 18.f);
-    b.press   = Anim(id.id ^ 0x9E3779B9u, down ? 1.f : 0.f, 32.f);
+    b.press   = Anim(id.id ^ 0x9E3779B9u, down ? 1.f : 0.f, 60.f);
     b.clicked = over && IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
     return b;
 }
-static Clay_Color BtnBg(Clay_Color base, Clay_Color hov, Bs b) { return Dark(Mix(base, hov, b.hover), b.press * 0.25f); }
+static Clay_Color BtnBg(Clay_Color base, Clay_Color hov, Bs b) { return Mix(Mix(base, hov, b.hover), RGB(90, 95, 106), b.press * 0.6f); }
 
 /* ------------------------------------------------------------------ */
 /* text + icon helpers                                                 */
@@ -211,8 +214,8 @@ static void Icon(int k, float sz, Clay_Color c) { IconV(k, sz, c, 1.f); }
 
 static bool IconBtn(Clay_ElementId id, int icon, float box, float isz, Clay_Color base, bool sel, float rad) {
     Bs b = Interact(id);
-    Clay_Color ic = Dark(Mix(base, C_TEXT, b.hover), b.press * 0.2f);
-    Clay_Color bg = sel ? Dark(C_SEL, b.press * 0.3f) : RGBA(255, 255, 255, 14 * b.hover + 12 * b.press);
+    Clay_Color ic = Mix(Mix(base, C_TEXT, b.hover), C_TEXT, b.press);
+    Clay_Color bg = sel ? Mix(C_SEL, RGB(90, 95, 106), b.press * 0.6f) : RGBA(255, 255, 255, 14 * b.hover + 56 * b.press);
     CLAY(id, {.layout = {.sizing = {FIX(box), FIX(box)}, .childAlignment = AL_C},
               .backgroundColor = bg, .cornerRadius = CLAY_CORNER_RADIUS(rad)}) {
         Icon(icon, isz, ic);
@@ -225,8 +228,8 @@ static bool TabBtn(Clay_ElementId id, const char *label, bool sel, float size, f
     float s = Anim(id.id + 7, sel ? 1.f : 0.f, 45.f);
     float a = fmaxf(s * 255.f, b.hover * (1.f - s) * 60.f);
     Clay_Color fill = border ? RGB(42, 43, 49) : RGB(46, 48, 55);
-    Clay_Color bg = Dark(RGBA(fill.r, fill.g, fill.b, a), b.press * 0.3f);
-    Clay_Color off = border ? RGB(112, 116, 128) : C_MUTED;
+    Clay_Color bg = Mix(RGBA(fill.r, fill.g, fill.b, a), RGBA(90, 95, 106, 255), b.press * 0.55f);
+    Clay_Color off = border ? RGB(140, 142, 150) : C_MUTED;
     CLAY(id, {.layout = {.sizing = {GROW, GROW}, .childAlignment = AL_C},
               .backgroundColor = bg, .cornerRadius = CLAY_CORNER_RADIUS(rad),
               .border = {.color = RGBA(55, 56, 62, border ? s * 255.f : 0.f), .width = CLAY_BORDER_OUTSIDE(1)}}) {
@@ -241,7 +244,7 @@ static bool LinkBtn(Clay_ElementId id, bool linked, float box, float isz) {
     Bs b = Interact(id);
     float la = Anim(id.id + 11u, linked ? 1.f : 0.f, 16.f);
     Clay_Color ic = Dark(Mix(Mix(C_MUTED, C_TEXT, b.hover), RGB(88, 142, 255), la), b.press * 0.2f);
-    Clay_Color bg = Mix(RGBA(255, 255, 255, 14 * b.hover + 12 * b.press), RGBA(64, 120, 255, 46 + 12 * b.hover), la);
+    Clay_Color bg = Mix(RGBA(255, 255, 255, 14 * b.hover + 56 * b.press), RGBA(64, 120, 255, 46 + 12 * b.hover + 50 * b.press), la);
     CLAY(id, {.layout = {.sizing = {FIX(box), FIX(box)}, .childAlignment = AL_C},
               .backgroundColor = bg, .cornerRadius = CLAY_CORNER_RADIUS(box / 2)}) {
         Icon(I_LINK, isz, ic);
@@ -342,22 +345,23 @@ static void DrawIcon(int k, Rectangle r, Color c, float v) {
                     LN(.4, .76, .4, .2); LN(.82, .66, .82, .1); LN(.4, .2, .82, .1); break;
     case I_PALETTE: Ring(P(.5, .5), .4f * w, t, c);
                     DrawCircleV(P(.34, .4), .06f * w, c); DrawCircleV(P(.52, .3), .06f * w, c);
-                    DrawCircleV(P(.7, .42), .06f * w, c); DrawCircleV(P(.38, .65), .06f * w, c); break;
+                    DrawCircleV(P(.7, .42), .06f * w, c); DrawCircleV(P(.38, .65), .06f * w, c);
+                    Ring(P(.66, .72), .1f * w, t * .8f, c); break;
     case I_GRADING: Ring(P(.5, .5), .4f * w, t, c);
                     DrawCircleV(P(.5, .32), .08f * w, c); DrawCircleV(P(.33, .62), .08f * w, c); DrawCircleV(P(.67, .62), .08f * w, c); break;
     case I_SLIDERS: LN(.1, .3, .9, .3); LN(.1, .7, .9, .7);
-                    DrawCircleV(P(.35, .3), .11f * w, c); DrawCircleV(P(.65, .7), .11f * w, c); break;
+                    DrawCircleV(P(.65, .3), .11f * w, c); DrawCircleV(P(.35, .7), .11f * w, c); break;
     case I_SUN:     Ring(P(.5, .5), .2f * w, t, c);
                     for (int i = 0; i < 8; i++) { float a = i * PI / 4; float s = sinf(a), co = cosf(a);
                         DrawLineEx((Vector2){x + (.5f + .32f * co) * w, y + (.5f + .32f * s) * h},
                                    (Vector2){x + (.5f + .45f * co) * w, y + (.5f + .45f * s) * h}, t, c); } break;
-    case I_DROP:    Arc(P(.5, .62), .26f * w, t, 0, 180, c); LN(.24, .62, .5, .1); LN(.76, .62, .5, .1); break;
+    case I_DROP:    Arc(P(.5, .64), .30f * w, t, 327.6f, 572.4f, c); LN(.5, .08, .247, .479); LN(.5, .08, .753, .479); break;
     case I_MOUNTAIN:LN(.08, .8, .4, .28); LN(.4, .28, .7, .8); LN(.08, .8, .92, .8); LN(.6, .55, .72, .4); LN(.72, .4, .92, .8); break;
     case I_CROP:    LN(.3, .1, .3, .7); LN(.3, .7, .9, .7); LN(.1, .3, .7, .3); LN(.7, .3, .7, .9); break;
     case I_POS:     LN(.5, .08, .5, .36); LN(.5, .64, .5, .92); LN(.08, .5, .36, .5); LN(.64, .5, .92, .5); DrawCircleV(P(.5, .5), .05f * w, c); break;
     case I_SCALE:   LN(.2, .8, .8, .2); LN(.55, .2, .8, .2); LN(.8, .2, .8, .45); LN(.2, .55, .2, .8); LN(.2, .8, .45, .8); break;
     case I_RESET:
-    case I_ROT:     Arc(P(.5, .5), .34f * w, t, 40, 330, c); LN(.8, .33, .8, .1); LN(.8, .33, .58, .33); break;
+    case I_ROT:     Arc(P(.5, .5), .34f * w, t, 210, 500, c); LN(.2, .33, .2, .1); LN(.2, .33, .42, .33); break;
     case I_LINK:    Capsule(P(.36, .64), -45, .20f * w, .15f * w, t, c);
                     Capsule(P(.64, .36), -45, .20f * w, .15f * w, t, c); break;
     case I_DISTORT: StrokeRR((Rectangle){x + .1f * w, y + .15f * h, .8f * w, .7f * h}, .14f * w, t, c);
@@ -424,15 +428,16 @@ static void DrawCustom(Cust *cu, Rectangle r) {
         Vector2 c = {r.x + r.width / 2, r.y + r.height / 2};
         float rad = fminf(r.width, r.height) / 2 - 1;
         for (int i = 0; i < 72; i++)
-            DrawCircleSector(c, rad, i * 5.f, i * 5.f + 5.6f, 3, ColorFromHSV(fmodf(i * 5.f + 250.f, 360.f), .72f, .74f));
-        for (float rr = rad; rr > 1; rr -= 1.f) {
+            DrawCircleSector(c, rad, i * 5.f, i * 5.f + 5.6f, 3, ColorFromHSV(fmodf(i * 5.f + 90.f, 360.f), .70f, .62f));
+        /* darken + desaturate towards the centre (each ring has its own alpha) */
+        for (float rr = rad; rr > 1.f; rr -= 1.f) {
             float t = 1.f - rr / rad;
-            DrawCircleV(c, rr, (Color){60, 60, 66, U8(26 * t * t * t * 2.2f)});
+            DrawRing(c, rr - 1.f, rr, 0, 360, 40, (Color){34, 32, 40, U8(225 * powf(t, 1.35f))});
         }
-        Ring(c, rad, 2, (Color){52, 54, 60, 255});
+        Ring(c, rad, 2, (Color){38, 39, 45, 255});
         float dot = 9.f + 1.5f * cu->f;
-        DrawCircleV(c, dot + 1.5f, (Color){20, 20, 24, 120});
-        DrawCircleV(c, dot, (Color){228, 228, 232, 255});
+        DrawCircleV(c, dot + 1.5f, (Color){14, 14, 18, 130});
+        DrawCircleV(c, dot, (Color){226, 227, 231, 255});
     } break;
 
     case K_SWITCH: {
@@ -535,7 +540,7 @@ static void RenderUI(Clay_RenderCommandArray cmds) {
             Clay_RectangleRenderData *d = &rc->renderData.rectangle;
             Clay_Color bc = d->backgroundColor;
             if (bc.r == 27 && bc.g == 28 && bc.b == 31 && bc.a == 255)
-                GradRR(r, d->cornerRadius.topLeft, (Color){27, 28, 31, 255}, (Color){21, 22, 24, 255});
+                GradRR(r, d->cornerRadius.topLeft, (Color){29, 30, 33, 255}, (Color){22, 23, 26, 255});
             else FillRR(r, d->cornerRadius.topLeft, RC(bc));
         } break;
         case CLAY_RENDER_COMMAND_TYPE_BORDER: {
@@ -587,6 +592,8 @@ static void RenderUI(Clay_RenderCommandArray cmds) {
         DrawRectangleRec((Rectangle){gPHPos.x - 5, gPHPos.y - 4, 10, 8}, red);
         Tri((Vector2){gPHPos.x - 5, gPHPos.y + 4}, (Vector2){gPHPos.x + 5, gPHPos.y + 4}, (Vector2){gPHPos.x, gPHPos.y + 10}, red);
     }
+    if (gFadeA > 2.f && gFadeR.width > 0.f)
+        GradRR(gFadeR, 16, (Color){29, 30, 33, U8(gFadeA)}, (Color){22, 23, 26, U8(gFadeA)});
     if (gSB) FillRR(gSBR, 2, (Color){92, 95, 104, 255});
 }
 
@@ -802,7 +809,7 @@ static void NumField(int n, const char *val, const char *unit) {
     Clay_ElementId id = CLAY_IDI("NumF", n);
     Bs b = Interact(id);
     CLAY(id, {.layout = {.sizing = {GROW, FIX(36)}, .padding = {10, 6, 0, 0}, .childGap = 5, .childAlignment = AL_Y},
-              .backgroundColor = Mix(C_RFIELD, RGB(46, 47, 54), b.hover), .cornerRadius = CLAY_CORNER_RADIUS(10),
+              .backgroundColor = Mix(Mix(C_RFIELD, RGB(46, 47, 54), b.hover), RGB(70, 73, 83), b.press * 0.8f), .cornerRadius = CLAY_CORNER_RADIUS(10),
               .border = {.color = Mix(RGB(44, 46, 52), RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
         HSPACE
         Tx(val, 20, C_TEXT, 0);
@@ -819,7 +826,7 @@ static void MiniField(int n, const char *lab) {
     Clay_ElementId id = CLAY_IDI("MiniF", n);
     Bs b = Interact(id);
     CLAY(id, {.layout = {.sizing = {FIX(112), FIX(34)}, .padding = {10, 6, 0, 0}, .childGap = 4, .childAlignment = AL_Y},
-              .backgroundColor = Mix(C_RFIELD, RGB(46, 47, 54), b.hover), .cornerRadius = CLAY_CORNER_RADIUS(9),
+              .backgroundColor = Mix(Mix(C_RFIELD, RGB(46, 47, 54), b.hover), RGB(70, 73, 83), b.press * 0.8f), .cornerRadius = CLAY_CORNER_RADIUS(9),
               .border = {.color = Mix(RGB(44, 46, 52), RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
         Tx(lab, 12, RGB(112, 124, 156), 1);
         HSPACE
@@ -966,7 +973,7 @@ static void WheelItem(int i, const char *label) {
         Bs b = Interact(wid);
         CLAY(wid, {.layout = {.sizing = {FIX(100), FIX(100)}}, .custom = {.customData = NC(K_WHEEL, C_CARD, C_CARD, C_CARD, 0, b.hover, 0)}}) {}
         Tx(label, 16, C_TEXT, 1);
-        Tx("Neutral", 13, RGB(80, 140, 210), 0);
+        Tx("Neutral", 13, RGB(140, 142, 150), 0);
     }
 }
 
@@ -975,8 +982,8 @@ static void AccHeader(int idx, const char *title, int icon, float openAnim) {
     Bs b = Interact(id);
     if (b.clicked) gAcc[idx] = !gAcc[idx];
     CLAY(id, {.layout = {.sizing = {GROW, FIX(52)}, .padding = {16, 14, 0, 0}, .childGap = 12, .childAlignment = AL_Y},
-              .backgroundColor = BtnBg(C_RCARD, RGB(36, 37, 43), b), .cornerRadius = CLAY_CORNER_RADIUS(14),
-              .border = {.color = Mix(C_RCARDB, RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+              .backgroundColor = BtnBg(Mix(C_RCARD, RGB(33, 34, 38), openAnim), Mix(RGB(36, 37, 43), RGB(40, 41, 47), openAnim), b), .cornerRadius = CLAY_CORNER_RADIUS(14),
+              .border = {.color = Mix(Mix(C_RCARDB, RGB(62, 64, 72), openAnim), RGB(84, 87, 96), fmaxf(b.hover * 0.7f, b.press)), .width = CLAY_BORDER_OUTSIDE(1)}}) {
         Icon(icon, 22, C_DIM);
         Tx(title, 18, C_TEXT, 0);
         HSPACE
@@ -1013,8 +1020,8 @@ static void Accordion(int idx, const char *title, int icon) {
                             Clay_ElementId rid = CLAY_ID("ResetGrade");
                             Bs b = Interact(rid);
                             CLAY(rid, {.layout = {.sizing = {FIT, FIT}, .childGap = 5, .childAlignment = AL_Y}}) {
-                                Icon(I_RESET, 14, Mix(RGB(120, 128, 160), C_TEXT, b.hover));
-                                Tx("Reset", 14, Mix(RGB(120, 128, 160), C_TEXT, b.hover), 0);
+                                Icon(I_RESET, 14, Mix(RGB(140, 142, 150), C_TEXT, b.hover));
+                                Tx("Reset", 14, Mix(RGB(140, 142, 150), C_TEXT, b.hover), 0);
                             }
                         }
                         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 10}}) {
@@ -1052,6 +1059,10 @@ static void UpdateInspScroll(void) {
     Clay_BoundingBox bb = Clay_GetElementData(CLAY_ID("InspBody")).boundingBox;
     Clay_BoundingBox cb = Clay_GetElementData(CLAY_ID("InspContent")).boundingBox;
     gInspViewH = bb.height;
+    gTabT = fminf(1.f, gTabT + gDt / 0.24f);
+    gTabE = gTabT * gTabT * (3.f - 2.f * gTabT);
+    gFadeR = (Rectangle){bb.x, bb.y, bb.width, bb.height};
+    gFadeA = (1.f - gTabE) * 255.f;
     float maxS = fmaxf(0.f, cb.height - bb.height);
     float wh = GetMouseWheelMove();
     Vector2 m = GetMousePosition();
@@ -1081,16 +1092,16 @@ static void RightPanel(void) {
         /* outer panel border + inner segmented container with its own border */
         CLAY(CLAY_ID("InspTabs"), {.layout = {.sizing = {GROW, FIX(56)}, .padding = CLAY_PADDING_ALL(5)}, RPANEL}) {
             CLAY(CLAY_ID("InspSeg"), {.layout = {.sizing = {GROW, GROW}, .padding = CLAY_PADDING_ALL(4), .childGap = 4},
-                                      .backgroundColor = RGB(10, 11, 13), .cornerRadius = CLAY_CORNER_RADIUS(12),
+                                      .backgroundColor = RGB(12, 13, 15), .cornerRadius = CLAY_CORNER_RADIUS(12),
                                       .border = {.color = RGB(24, 25, 28), .width = CLAY_BORDER_OUTSIDE(1)}}) {
                 for (int i = 0; i < 4; i++)
                     if (TabBtn(CLAY_IDI("InspTab", i), tabs[i], gRightTab == i, 16, 9, true)) {
-                        if (gRightTab != i) { gRightTab = i; gScroll = gScrollT = 0.f; gFollow = false; }
+                        if (gRightTab != i) { gRightTab = i; gScroll = gScrollT = 0.f; gFollow = false; gTabT = 0.f; gTabE = 0.f; }
                     }
             }
         }
         CLAY(CLAY_ID("InspBody"), {.layout = {.sizing = {GROW, GROW}}, RPANEL,
-                                   .clip = {.vertical = true, .childOffset = {0, -gScroll}}}) {
+                                   .clip = {.vertical = true, .childOffset = {0, -gScroll + (1.f - gTabE) * 18.f}}}) {
             CLAY(CLAY_ID("InspContent"), {.layout = {COLM, .sizing = {GROW, CLAY_SIZING_FIT(gInspViewH)}, .padding = CLAY_PADDING_ALL(14), .childGap = 10}}) {
                 CLAY(CLAY_ID("InspTitle"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 2, 4}, .childGap = 12, .childAlignment = AL_Y}}) {
                     Icon(icons[gRightTab], 24, C_DIM);
