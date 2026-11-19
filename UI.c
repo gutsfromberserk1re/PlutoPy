@@ -32,6 +32,7 @@
 #define Arc          Win32Arc
 #define DrawText     Win32DrawText
 #define DrawTextEx   Win32DrawTextEx
+#define DrawIcon     Win32DrawIcon
 #define LoadImage    Win32LoadImage
 #define PlaySound    Win32PlaySound
 #include <windows.h>
@@ -42,6 +43,7 @@
 #undef Arc
 #undef DrawText
 #undef DrawTextEx
+#undef DrawIcon
 #undef LoadImage
 #undef PlaySound
 #undef RGB
