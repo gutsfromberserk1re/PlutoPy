@@ -454,6 +454,20 @@ static void Tri(Vector2 a, Vector2 b, Vector2 c, Color col) {
     if (cr > 0) { Vector2 t = b; b = c; c = t; }
     DrawTriangle(a, b, c, col);
 }
+static void CubicStroke(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float thick, Color col) {
+    Vector2 prev = p0;
+    for (int i = 1; i <= 10; i++) {
+        float t = i / 10.f, u = 1.f - t;
+        Vector2 p = {
+            u*u*u*p0.x + 3.f*u*u*t*p1.x + 3.f*u*t*t*p2.x + t*t*t*p3.x,
+            u*u*u*p0.y + 3.f*u*u*t*p1.y + 3.f*u*t*t*p2.y + t*t*t*p3.y
+        };
+        DrawLineEx(prev, p, thick, col);
+        prev = p;
+    }
+    DrawCircleV(p0, thick * .5f, col);
+    DrawCircleV(p3, thick * .5f, col);
+}
 static void TxtAt(int font, const char *s, float x, float y, float size, Color c) {
     int px = PxOf(font, (float)(int)(size + 2.25f));
     DrawTextEx(FontPx(font, px), s, (Vector2){roundf(x), roundf(y)}, (float)px, 0, c);
@@ -505,8 +519,15 @@ static void DrawIcon(int k, Rectangle r, Color c, float v) {
     case I_SCALE:   LN(.12, .88, .88, .12); LN(.55, .12, .88, .12); LN(.88, .12, .88, .45); LN(.12, .55, .12, .88); LN(.12, .88, .45, .88); break;
     case I_RESET:
     case I_ROT:     Arc(P(.5, .5), .34f * w, t, 210, 500, c); LN(.2, .33, .2, .1); LN(.2, .33, .42, .33); break;
-    case I_LINK:    Capsule(P(.36, .64), -45, .20f * w, .15f * w, t, c);
-                    Capsule(P(.64, .36), -45, .20f * w, .15f * w, t, c); break;
+    case I_LINK: {
+                    /* Two open, interlocking chain links, drawn with a clean rounded stroke. */
+                    CubicStroke(P(.43, .47), P(.50, .37), P(.58, .27), P(.65, .22), t, c);
+                    CubicStroke(P(.65, .22), P(.78, .12), P(.90, .23), P(.85, .39), t, c);
+                    CubicStroke(P(.85, .39), P(.81, .48), P(.72, .56), P(.65, .63), t, c);
+                    CubicStroke(P(.35, .37), P(.27, .45), P(.19, .53), P(.15, .62), t, c);
+                    CubicStroke(P(.15, .62), P(.10, .79), P(.24, .90), P(.39, .80), t, c);
+                    CubicStroke(P(.39, .80), P(.47, .73), P(.54, .64), P(.57, .56), t, c);
+                } break;
     case I_DISTORT: StrokeRR((Rectangle){x + .1f * w, y + .15f * h, .8f * w, .7f * h}, .14f * w, t, c);
                     LN(.1, .5, .9, .5); LN(.5, .15, .5, .5); break;
     case I_SKIP_B:  LN(.28, .2, .28, .8); LN(.76, .2, .4, .5); LN(.4, .5, .76, .8); break;
@@ -1234,19 +1255,19 @@ static void FieldCard(int n, const char *title, int icon, const char *l1, const 
     }
 }
 
-/* Crop Tools / Distort toggle button (55 px tall) */
+/* Crop Tools / Distort toggle button (66 px tall before FIX scaling) */
 static bool NavButton(int n, int icon, const char *label, float open) {
     Clay_ElementId id = CLAY_IDI("Nav", n);
     Bs b = Interact(id);
     Clay_Color base = Mix(C_RCARD, RGB(42, 44, 51), open);
     Clay_Color hov  = Mix(RGB(38, 40, 46), RGB(48, 50, 58), open);
-    CLAY(id, {.layout = {.sizing = {GROW, FIX(55)}, .padding = {14, 16, 0, 0}, .childGap = 10, .childAlignment = AL_Y},
-              .backgroundColor = BtnBg(base, hov, b), .cornerRadius = CLAY_CORNER_RADIUS(18),
+    CLAY(id, {.layout = {.sizing = {GROW, FIX(64)}, .padding = {16, 18, 0, 0}, .childGap = 12, .childAlignment = AL_Y},
+              .backgroundColor = BtnBg(base, hov, b), .cornerRadius = CLAY_CORNER_RADIUS(20),
               .border = {.color = Mix(C_RCARDB, RGB(80, 83, 92), fmaxf(b.hover, open * 0.8f)), .width = CLAY_BORDER_OUTSIDE(1)}}) {
-        Icon(icon, 26, Mix(C_ICON, C_TEXT, open));
-        Tx(label, 18, C_TEXT, 0);
+        Icon(icon, 29, Mix(C_ICON, C_TEXT, open));
+        Tx(label, 19, C_TEXT, 0);
         HSPACE
-        Icon(open > 0.5f ? I_CHEV_DN : I_CHEV_R, 18, Mix(C_ICON, C_TEXT, open));
+        Icon(open > 0.5f ? I_CHEV_DN : I_CHEV_R, 20, Mix(C_ICON, C_TEXT, open));
     }
     return b.clicked;
 }
@@ -1306,8 +1327,8 @@ static void NavSection(void) {
 
 static const char *RotStr(float r) { return fabsf(r) < 0.05f ? "0" : Fmt("%.1f", r); }
 
-/* Transform tab. Vertical rhythm (px, relative to the panel top):
-   15 pad | 29 title + 5 | 10 | 169 cards | 10 | 160 rotation | 10 | 53 opacity | 10+ | 55 nav | 13 pad = 539 */
+/* Transform tab. A flexible spacer positions the enlarged 66px nav buttons
+   above a deliberate 26px bottom gap, matching the reference panel rhythm. */
 static void TransformView(void) {
     CLAY(CLAY_ID("TfCol"), {.layout = {COLM, .sizing = {GROW, GROW}}}) {
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 10}}) {
@@ -1355,6 +1376,7 @@ static void TransformView(void) {
         }
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, CLAY_SIZING_GROW(10)}}}) {}   /* min 10px, grows when the window is taller */
         NavSection();
+        GAPY(26)
     }
 }
 
