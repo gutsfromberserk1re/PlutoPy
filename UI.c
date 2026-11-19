@@ -272,9 +272,10 @@ static bool TabBtn(Clay_ElementId id, const char *label, bool sel, float size, f
     float s = Anim(id.id + 7, sel ? 1.f : 0.f, 45.f);
     Clay_Color bg;
     if (pill) {
-        /* the selected background is the sliding pill drawn by the segment itself */
-        bg = RGBA(255, 255, 255, 12 * b.hover * (1.f - s) + 26 * b.press);
-    } else {
+    /* the selected background is the sliding pill drawn by the segment itself;
+       no press flash, no hover/press tint on the right-panel tabs */
+    bg = RGBA(255, 255, 255, 0);
+} else {
         float a = fmaxf(s * 255.f, b.hover * (1.f - s) * 60.f);
         Clay_Color fill = RGB(46, 48, 55);
         bg = Mix(RGBA(fill.r, fill.g, fill.b, a), RGBA(90, 95, 106, 255), b.press * 0.55f);
