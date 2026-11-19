@@ -8,8 +8,15 @@
  *   macOS:   clang -O2 pluto_ui.c -o pluto -lraylib -lm -framework IOKit -framework Cocoa -framework OpenGL
  *   Windows: gcc -O2 pluto_ui.c -o pluto.exe -lraylib -lopengl32 -lgdi32 -lwinmm
  *
- * Right panel: tabs, accordions, link toggles, Crop Tools / Distort expanders
- * and scrolling all react to clicks. Everything else only gives hover / press feedback.
+ * Right panel (matches the screen recording):
+ *   - sliding tab pill + fade/slide when switching Transform / Colors / Effects / Text
+ *   - Transform: number steppers, link toggles, draggable rotation ruler + opacity slider,
+ *     animated Crop Tools / Distort expanders
+ *   - Colors: single-open animated accordions, draggable colour wheels (H° · S readout),
+ *     HSL colour chips, gradient + plain draggable sliders, per-section Reset
+ *   - Effects: collapsible Transitions card, Filters presets
+ *   - Text: Subtitles card (panel shrinks to its content)
+ * Everything else only gives hover / press feedback.
  */
 #define CLAY_IMPLEMENTATION
 #include "clay.h"
@@ -48,6 +55,7 @@ static Clay_ElementDeclaration ClayCompatDeclaration(
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -74,6 +82,7 @@ static Clay_ElementDeclaration ClayCompatDeclaration(
 #define C_RCARD     RGB(24,25,28)
 #define C_RCARDB    RGB(35,36,40)
 #define C_RFIELD    RGB(33,34,38)
+#define C_VALBOX    RGB(30,31,36)
 #define RPANEL      .backgroundColor = C_PGRAD, .cornerRadius = CLAY_CORNER_RADIUS(16), \
                     .border = {.color = RGB(35,36,38), .width = CLAY_BORDER_OUTSIDE(1)}
 #define RCARD       .backgroundColor = C_RCARD, .cornerRadius = CLAY_CORNER_RADIUS(14), \
@@ -104,9 +113,9 @@ enum {
     I_CHEV_UP, I_CHEV_DN, I_SEARCH, I_LIBRARY, I_UNDO, I_REDO, I_EXPORT, I_NOTE, I_PALETTE,
     I_GRADING, I_SLIDERS, I_SUN, I_DROP, I_MOUNTAIN, I_DISTORT, I_SKIP_B, I_SKIP_F, I_PLAY,
     I_LOOP, I_GRID, I_POINTER, I_HAND, I_SCISSORS, I_TEXT, I_TRASH, I_KF_PREV, I_KF_NEXT,
-    I_KF_DIAMOND, I_ZOOM_OUT, I_ZOOM_IN, I_MAGNET, I_FILM,
+    I_KF_DIAMOND, I_ZOOM_OUT, I_ZOOM_IN, I_MAGNET, I_FILM, I_BOWTIE, I_SPARKLE,
     K_THUMB = 100, K_KNOB, K_WHEEL, K_SWITCH, K_SLIDER, K_ROTRULER, K_RULER, K_PREVIEW,
-    K_CLIP, K_SCROLLBAR
+    K_CLIP, K_SCROLLBAR, K_PILL, K_FILTER, K_CHIP
 };
 
 typedef struct { int kind; Clay_Color a, b, c; float v, f; int i; } Cust;
@@ -123,11 +132,11 @@ static Cust *NC(int k, Clay_Color a, Clay_Color b, Clay_Color c, float v, float 
 /* ------------------------------------------------------------------ */
 static Font  gFonts[2];
 static float gDt;
-static bool  gHand;
+static bool  gHand, gCross;
 static int   gLeftTab = 0, gRightTab = 0;
-static bool  gAcc[5] = {true, false, false, false, false};
 
 /* right panel state */
+static int   gOpenAcc = 0;                            /* single-open accordion, -1 none */
 static bool  gLink[4] = {false, true, false, false};  /* position, scale, crop, distort */
 static int   gOpenTool = -1;                          /* -1 none, 0 crop tools, 1 distort */
 static float gScroll, gScrollT;                       /* inspector scroll (pixels down)   */
@@ -138,8 +147,28 @@ static float gTabE = 1.f;                             /* eased */
 static Rectangle gFadeR; static float gFadeA;         /* fade overlay while switching */
 static bool  gSB; static Rectangle gSBR;              /* inspector scrollbar thumb */
 
+/* values */
+static float gNum[4] = {0, 0, 100, 100};              /* X, Y, W, H */
+static float gRot, gRotT; static bool gRotDrag;       /* degrees -180..180 */
+#define NSL 48
+static float gSl[NSL], gSlT[NSL]; static bool gSlDrag[NSL]; /* slider 0..1 (0 = opacity) */
+static Vector2 gWh[3], gWhT[3]; static bool gWhDrag[3];     /* wheel puck, unit disk */
+static int   gHsl = 0;                                /* selected HSL chip */
+static bool  gTransOpen = true;                       /* effects: transitions card */
+static int   gFilter = 0;                             /* effects: selected preset */
+static uint32_t gDragId;                              /* active drag target (slider/ruler) */
+static int   gDragWheel = -1;
+
 /* playhead is drawn after everything else so rows never cover it */
 static bool gPH; static Vector2 gPHPos; static float gPHLen;
+
+/* formatted text lives in a ring so Clay can read it until render */
+static char gFb[160][40]; static int gFbN;
+static const char *Fmt(const char *f, ...) {
+    char *b = gFb[gFbN++ % 160];
+    va_list ap; va_start(ap, f); vsnprintf(b, 40, f, ap); va_end(ap);
+    return b;
+}
 
 /* ------------------------------------------------------------------ */
 /* animation table                                                     */
@@ -206,6 +235,9 @@ static Clay_String S(const char *s) { return (Clay_String){.isStaticallyAllocate
 static void Tx(const char *s, float size, Clay_Color c, int font) {
     CLAY_TEXT(S(s), CLAY_TEXT_CONFIG({.fontId = font, .fontSize = size, .textColor = c, .wrapMode = CLAY_TEXT_WRAP_NONE}));
 }
+static void TxWrap(const char *s, float size, Clay_Color c, int font) {
+    CLAY_TEXT(S(s), CLAY_TEXT_CONFIG({.fontId = font, .fontSize = size, .textColor = c, .wrapMode = CLAY_TEXT_WRAP_WORDS}));
+}
 static void IconV(int k, float sz, Clay_Color c, float v) {
     CLAY_AUTO_ID({.layout = {.sizing = {.width = FIX(sz), .height = FIX(sz)}},
                   .custom = {.customData = NC(k, c, c, c, v, 0, 0)}}) {}
@@ -223,16 +255,21 @@ static bool IconBtn(Clay_ElementId id, int icon, float box, float isz, Clay_Colo
     return b.clicked;
 }
 
-static bool TabBtn(Clay_ElementId id, const char *label, bool sel, float size, float rad, bool border) {
+static bool TabBtn(Clay_ElementId id, const char *label, bool sel, float size, float rad, bool pill) {
     Bs b = Interact(id);
     float s = Anim(id.id + 7, sel ? 1.f : 0.f, 45.f);
-    float a = fmaxf(s * 255.f, b.hover * (1.f - s) * 60.f);
-    Clay_Color fill = border ? RGB(42, 43, 49) : RGB(46, 48, 55);
-    Clay_Color bg = Mix(RGBA(fill.r, fill.g, fill.b, a), RGBA(90, 95, 106, 255), b.press * 0.55f);
-    Clay_Color off = border ? RGB(140, 142, 150) : C_MUTED;
+    Clay_Color bg;
+    if (pill) {
+        /* the selected background is the sliding pill drawn by the segment itself */
+        bg = RGBA(255, 255, 255, 12 * b.hover * (1.f - s) + 26 * b.press);
+    } else {
+        float a = fmaxf(s * 255.f, b.hover * (1.f - s) * 60.f);
+        Clay_Color fill = RGB(46, 48, 55);
+        bg = Mix(RGBA(fill.r, fill.g, fill.b, a), RGBA(90, 95, 106, 255), b.press * 0.55f);
+    }
+    Clay_Color off = pill ? RGB(140, 142, 150) : C_MUTED;
     CLAY(id, {.layout = {.sizing = {GROW, GROW}, .childAlignment = AL_C},
-              .backgroundColor = bg, .cornerRadius = CLAY_CORNER_RADIUS(rad),
-              .border = {.color = RGBA(55, 56, 62, border ? s * 255.f : 0.f), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+              .backgroundColor = bg, .cornerRadius = CLAY_CORNER_RADIUS(rad)}) {
         Tx(label, size, Mix(off, C_TEXT, fmaxf(s, b.hover * 0.6f)), 0);
     }
     /* select on press, not release, so it feels instant */
@@ -390,10 +427,22 @@ static void DrawIcon(int k, Rectangle r, Color c, float v) {
                     LN(.12, .2, .32, .2); LN(.68, .2, .88, .2); break;
     case I_FILM:    StrokeRR((Rectangle){x + .1f * w, y + .18f * h, .8f * w, .64f * h}, .1f * w, t, c);
                     LN(.34, .18, .34, .82); LN(.66, .18, .66, .82); break;
+    case I_BOWTIE:  LN(.1, .22, .1, .78); LN(.1, .22, .5, .5); LN(.1, .78, .5, .5);
+                    LN(.9, .22, .9, .78); LN(.9, .22, .5, .5); LN(.9, .78, .5, .5); break;
+    case I_SPARKLE: LN(.5, .08, .58, .42); LN(.58, .42, .92, .5); LN(.92, .5, .58, .58); LN(.58, .58, .5, .92);
+                    LN(.5, .92, .42, .58); LN(.42, .58, .08, .5); LN(.08, .5, .42, .42); LN(.42, .42, .5, .08); break;
     default: break;
     }
 #undef P
 #undef LN
+}
+
+/* ------------------------------------------------------------------ */
+/* wheel helpers                                                       */
+/* ------------------------------------------------------------------ */
+static void WheelInfo(Vector2 p, float *hue, float *len) {
+    *len = sqrtf(p.x * p.x + p.y * p.y);
+    *hue = fmodf(atan2f(p.y, p.x) * RAD2DEG + 90.f + 360.f, 360.f);
 }
 
 /* ------------------------------------------------------------------ */
@@ -425,6 +474,7 @@ static void DrawCustom(Cust *cu, Rectangle r) {
     } break;
 
     case K_WHEEL: {
+        /* b.r / b.g = puck position (unit disk), c = puck colour, v = coloured? */
         Vector2 c = {r.x + r.width / 2, r.y + r.height / 2};
         float rad = fminf(r.width, r.height) / 2 - 1;
         for (int i = 0; i < 72; i++)
@@ -435,9 +485,15 @@ static void DrawCustom(Cust *cu, Rectangle r) {
             DrawRing(c, rr - 1.f, rr, 0, 360, 40, (Color){34, 32, 40, U8(225 * powf(t, 1.35f))});
         }
         Ring(c, rad, 2, (Color){38, 39, 45, 255});
-        float dot = 9.f + 1.5f * cu->f;
-        DrawCircleV(c, dot + 1.5f, (Color){14, 14, 18, 130});
-        DrawCircleV(c, dot, (Color){226, 227, 231, 255});
+        Vector2 p = {c.x + cu->b.r * rad, c.y + cu->b.g * rad};
+        float dot = 8.5f + 1.5f * cu->f;
+        DrawCircleV(p, dot + 3.f, (Color){10, 10, 14, 120});
+        if (cu->v > .5f) {
+            DrawCircleV(p, dot + 1.8f, (Color){244, 245, 248, 255});
+            DrawCircleV(p, dot - .5f, RC(cu->c));
+        } else {
+            DrawCircleV(p, dot + 1.f, (Color){226, 227, 231, 255});
+        }
     } break;
 
     case K_SWITCH: {
@@ -449,24 +505,36 @@ static void DrawCustom(Cust *cu, Rectangle r) {
     } break;
 
     case K_SLIDER: {
-        bool big = cu->i == 1;
+        /* i bit0 = big, bit1 = gradient (a -> b), bit2 = rainbow */
+        bool big = cu->i & 1, grad = cu->i & 2, rainbow = cu->i & 4;
         float th = big ? 5.f : 4.f, kr = big ? 8.f : 7.f;
         float cy = r.y + r.height / 2;
         Rectangle tr = {r.x, cy - th / 2, r.width, th};
-        FillRR(tr, th / 2, RC(cu->a));
-        FillRR((Rectangle){r.x, cy - th / 2, kr + (r.width - 2 * kr) * cu->v, th}, th / 2, RC(cu->b));
-        DrawCircleV((Vector2){r.x + kr + (r.width - 2 * kr) * cu->v, cy}, kr + cu->f, (Color){240, 240, 244, 255});
+        if (rainbow) {
+            Color cs[7] = {{240,60,60,255},{240,220,60,255},{60,220,90,255},{60,220,230,255},{70,100,250,255},{230,70,230,255},{240,60,60,255}};
+            float sw = tr.width / 6.f;
+            for (int i = 0; i < 6; i++)
+                DrawRectangleGradientH((int)(tr.x + sw * i), (int)tr.y, (int)ceilf(sw), (int)th, cs[i], cs[i + 1]);
+        } else if (grad) {
+            DrawRectangleGradientH((int)tr.x, (int)tr.y, (int)tr.width, (int)th, RC(cu->a), RC(cu->b));
+        } else {
+            FillRR(tr, th / 2, RC(cu->a));
+            FillRR((Rectangle){r.x, cy - th / 2, kr + (r.width - 2 * kr) * cu->v, th}, th / 2, RC(cu->b));
+        }
+        Vector2 kc = {r.x + kr + (r.width - 2 * kr) * cu->v, cy};
+        DrawCircleV((Vector2){kc.x, kc.y + 1.f}, kr + cu->f + 1.f, (Color){0, 0, 0, 70});
+        DrawCircleV(kc, kr + cu->f, (Color){240, 240, 244, 255});
     } break;
 
     case K_ROTRULER: {
+        /* v = normalised marker position 0..1 */
         Rectangle box = {r.x, r.y, r.width, 48};
         FillRR(box, 12, (Color){13, 14, 17, 255});
         StrokeRR(box, 12, 1, (Color){38, 40, 46, 255});
         float x0 = box.x + 24, x1 = box.x + box.width - 24, cy = box.y + 24;
         for (int i = 0; i <= 36; i++) {
             float px = x0 + (x1 - x0) * i / 36.f;
-            if (i == 18)          DrawLineEx((Vector2){px, cy - 15}, (Vector2){px, cy + 15}, 3.f, (Color){235, 55, 65, 255});
-            else if (i % 9 == 0)  DrawLineEx((Vector2){px, cy - 13}, (Vector2){px, cy + 13}, 1.8f, (Color){232, 234, 240, 255});
+            if (i % 9 == 0)       DrawLineEx((Vector2){px, cy - 13}, (Vector2){px, cy + 13}, 1.8f, (Color){232, 234, 240, 255});
             else if (i % 3 == 0)  DrawLineEx((Vector2){px, cy - 8},  (Vector2){px, cy + 8},  1.2f, (Color){150, 153, 162, 220});
             else                  DrawLineEx((Vector2){px, cy - 5},  (Vector2){px, cy + 5},  1.f,  (Color){104, 107, 116, 200});
         }
@@ -475,8 +543,9 @@ static void DrawCustom(Cust *cu, Rectangle r) {
             float px = x0 + (x1 - x0) * (i * 9) / 36.f;
             TxtAt(0, lab[i], px - TxtW(0, lab[i], 14) / 2, box.y + 56, 14, RC(C_MUTED));
         }
-        float cx = x0 + (x1 - x0) / 2;
-        Tri((Vector2){cx, r.y + 78}, (Vector2){cx - 7, r.y + 90}, (Vector2){cx + 7, r.y + 90}, (Color){240, 240, 244, 255});
+        float mx = x0 + (x1 - x0) * cu->v;
+        DrawLineEx((Vector2){mx, cy - 15}, (Vector2){mx, cy + 15}, 3.f, (Color){235, 55, 65, 255});
+        Tri((Vector2){mx, r.y + 78}, (Vector2){mx - 7, r.y + 90}, (Vector2){mx + 7, r.y + 90}, (Color){240, 240, 244, 255});
     } break;
 
     case K_RULER: {
@@ -513,6 +582,36 @@ static void DrawCustom(Cust *cu, Rectangle r) {
     case K_SCROLLBAR:
         FillRR((Rectangle){r.x, r.y, r.width, r.height * .9f}, r.width / 2, (Color){58, 60, 67, 255});
         break;
+
+    case K_PILL: {
+        /* sliding selection pill behind the 4 inspector tabs; v = fractional tab index */
+        float tw = (r.width - 8.f - 12.f) / 4.f;
+        Rectangle p = {r.x + 4.f + cu->v * (tw + 4.f), r.y + 4.f, tw, r.height - 8.f};
+        FillRR(p, 9, (Color){43, 45, 52, 255});
+        StrokeRR(p, 9, 1, (Color){58, 60, 67, 255});
+    } break;
+
+    case K_FILTER: {
+        /* a,b gradient, c sun colour, f hover, i selected */
+        GradRR(r, 10, RC(cu->a), RC(cu->b));
+        DrawCircleV((Vector2){r.x + r.width * .72f, r.y + r.height * .26f}, r.width * .12f, RC(cu->c));
+        FillRR(r, 10, (Color){255, 255, 255, U8(22 * cu->f)});
+        if (cu->i) {
+            StrokeRR((Rectangle){r.x - 1, r.y - 1, r.width + 2, r.height + 2}, 11, 2, (Color){240, 241, 245, 255});
+        }
+    } break;
+
+    case K_CHIP: {
+        Vector2 c = {r.x + r.width / 2, r.y + r.height / 2};
+        float rad = r.width / 2;
+        if (cu->i) {
+            for (int i = 0; i < 36; i++)
+                DrawCircleSector(c, rad, i * 10.f, i * 10.f + 11.f, 3, ColorFromHSV(fmodf(i * 10.f + 90.f, 360.f), .72f, .92f));
+            DrawCircleV(c, rad * .42f, (Color){240, 240, 244, 30});
+        } else {
+            DrawCircleV(c, rad, RC(cu->a));
+        }
+    } break;
     }
 }
 
@@ -802,21 +901,104 @@ static void CenterPanel(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* UI: inspector (right)                                               */
+/* UI: inspector (right) - interaction helpers                         */
 /* ------------------------------------------------------------------ */
-/* number field: value + unit + up/down chevrons */
-static void NumField(int n, const char *val, const char *unit) {
+static float SlDefault(int gi) {
+    if (gi == 0) return 1.f;                 /* opacity */
+    if (gi / 8 == 4 && gi % 8 == 0) return 0.f; /* sharpness starts at 0 */
+    return .5f;
+}
+static void ResetAcc(int idx) {
+    if (idx == 0) { for (int i = 0; i < 3; i++) gWhT[i] = (Vector2){0, 0}; }
+    else { for (int s = 0; s < 8; s++) gSlT[idx * 8 + s] = SlDefault(idx * 8 + s); if (idx == 1) gHsl = 0; }
+}
+static void TickState(void) {
+    float k = 1.f - expf(-18.f * gDt);
+    for (int i = 0; i < NSL; i++) {
+        if (gSlDrag[i]) continue;
+        gSl[i] += (gSlT[i] - gSl[i]) * k;
+        if (fabsf(gSlT[i] - gSl[i]) < 0.0006f) gSl[i] = gSlT[i];
+    }
+    if (!gRotDrag) {
+        gRot += (gRotT - gRot) * k;
+        if (fabsf(gRotT - gRot) < 0.02f) gRot = gRotT;
+    }
+    for (int i = 0; i < 3; i++) {
+        if (gWhDrag[i]) continue;
+        gWh[i].x += (gWhT[i].x - gWh[i].x) * k; gWh[i].y += (gWhT[i].y - gWh[i].y) * k;
+        if (fabsf(gWhT[i].x - gWh[i].x) < 0.002f && fabsf(gWhT[i].y - gWh[i].y) < 0.002f) gWh[i] = gWhT[i];
+    }
+}
+
+/* drag a horizontal slider (value 0..1 in gSl[gi]) */
+static void SliderLogic(Clay_ElementId id, int gi, float kr) {
+    if (Clay_PointerOver(id) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) gDragId = id.id;
+    gSlDrag[gi] = false;
+    if (gDragId == id.id) {
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            Clay_BoundingBox bb = Clay_GetElementData(id).boundingBox;
+            if (bb.width > 2 * kr) {
+                float t = (GetMousePosition().x - bb.x - kr) / (bb.width - 2 * kr);
+                t = t < 0 ? 0 : t > 1 ? 1 : t;
+                gSl[gi] = gSlT[gi] = t;
+            }
+            gSlDrag[gi] = true;
+        } else gDragId = 0;
+    }
+}
+
+static void WheelLogic(int i, Clay_ElementId id) {
+    Clay_BoundingBox bb = Clay_GetElementData(id).boundingBox;
+    Vector2 m = GetMousePosition();
+    float rad = fminf(bb.width, bb.height) / 2.f;
+    Vector2 c = {bb.x + bb.width / 2.f, bb.y + bb.height / 2.f};
+    float dx = m.x - c.x, dy = m.y - c.y;
+    if (rad > 1.f && Clay_PointerOver(id) && sqrtf(dx * dx + dy * dy) <= rad + 6.f) {
+        gCross = true;
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) gDragWheel = i;
+    }
+    gWhDrag[i] = false;
+    if (gDragWheel == i) {
+        gCross = true;
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && rad > 1.f) {
+            float px = dx / (rad - 1.f), py = dy / (rad - 1.f), l = sqrtf(px * px + py * py);
+            if (l > 1.f) { px /= l; py /= l; }
+            gWh[i] = gWhT[i] = (Vector2){px, py};
+            gWhDrag[i] = true;
+        } else gDragWheel = -1;
+    }
+}
+
+static bool Arrow(Clay_ElementId id, int icon) {
+    Bs b = Interact(id);
+    CLAY(id, {.layout = {.sizing = {FIX(14), FIX(13)}, .childAlignment = AL_C}}) {
+        Icon(icon, 12, Mix(C_MUTED, C_TEXT, b.hover));
+    }
+    return b.clicked;
+}
+
+static void ValBox(const char *s, const char *unit, float w, float h, float fs) {
+    CLAY_AUTO_ID({.layout = {.sizing = {FIX(w), FIX(h)}, .padding = {0, 10, 0, 0}, .childGap = 4,
+                             .childAlignment = {.x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER}},
+                  .backgroundColor = C_VALBOX, .cornerRadius = CLAY_CORNER_RADIUS(8)}) {
+        Tx(s, fs, C_TEXT, 0);
+        if (unit) Tx(unit, fs - 3, C_MUTED, 0);
+    }
+}
+
+/* number field: value + unit + up/down steppers */
+static void NumField(int n, float *v, const char *unit) {
     Clay_ElementId id = CLAY_IDI("NumF", n);
     Bs b = Interact(id);
     CLAY(id, {.layout = {.sizing = {GROW, FIX(36)}, .padding = {10, 6, 0, 0}, .childGap = 5, .childAlignment = AL_Y},
               .backgroundColor = Mix(Mix(C_RFIELD, RGB(46, 47, 54), b.hover), RGB(70, 73, 83), b.press * 0.8f), .cornerRadius = CLAY_CORNER_RADIUS(10),
               .border = {.color = Mix(RGB(44, 46, 52), RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
         HSPACE
-        Tx(val, 20, C_TEXT, 0);
+        Tx(Fmt("%d", (int)roundf(*v)), 20, C_TEXT, 0);
         Tx(unit, 15, C_MUTED, 0);
         CLAY_AUTO_ID({.layout = {COLM, .sizing = {FIT, FIT}, .padding = {2, 0, 0, 0}}}) {
-            Icon(I_CHEV_UP, 12, C_MUTED);
-            Icon(I_CHEV_DN, 12, C_MUTED);
+            if (Arrow(CLAY_IDI("NumU", n), I_CHEV_UP)) *v += 1.f;
+            if (Arrow(CLAY_IDI("NumD", n), I_CHEV_DN)) *v -= 1.f;
         }
     }
 }
@@ -839,24 +1021,24 @@ static void MiniField(int n, const char *lab) {
     }
 }
 
-static void FieldCard(int n, const char *title, int icon, const char *l1, const char *l2, const char *val, const char *unit, int link) {
+static void FieldCard(int n, const char *title, int icon, const char *l1, const char *l2, float *a, float *b, float def, const char *unit, int link) {
     CLAY(CLAY_IDI("FCard", n), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(12), .childGap = 8}, RCARD}) {
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 8, .childAlignment = AL_Y}}) {
             Icon(icon, 19, C_DIM);
             Tx(title, 18, C_TEXT, 1);
             HSPACE
-            IconBtn(CLAY_IDI("Reset", n), I_RESET, 24, 14, C_MUTED, false, 6);
+            if (IconBtn(CLAY_IDI("Reset", n), I_RESET, 24, 14, C_MUTED, false, 6)) { *a = def; *b = def; }
         }
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 6, .childAlignment = AL_Y}}) {
             CLAY_AUTO_ID({.layout = {.sizing = {FIX(20), FIT}}}) { Tx(l1, 17, C_MUTED, 0); }
-            NumField(n * 2, val, unit);
+            NumField(n * 2, a, unit);
         }
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
             if (LinkBtn(CLAY_IDI("Link", n), gLink[link], 28, 20)) gLink[link] = !gLink[link];
         }
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 6, .childAlignment = AL_Y}}) {
             CLAY_AUTO_ID({.layout = {.sizing = {FIX(20), FIT}}}) { Tx(l2, 17, C_MUTED, 0); }
-            NumField(n * 2 + 1, val, unit);
+            NumField(n * 2 + 1, b, unit);
         }
     }
 }
@@ -931,62 +1113,88 @@ static void NavSection(void) {
     }
 }
 
+static const char *RotStr(float r) { return fabsf(r) < 0.05f ? "0" : Fmt("%.1f", r); }
+
 static void TransformView(void) {
     CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 10}}) {
-        FieldCard(0, "Position", I_POS, "X", "Y", "0", "px", 0);
-        FieldCard(1, "Scale", I_SCALE, "W", "H", "100", "%", 1);
+        FieldCard(0, "Position", I_POS, "X", "Y", &gNum[0], &gNum[1], 0.f, "px", 0);
+        FieldCard(1, "Scale", I_SCALE, "W", "H", &gNum[2], &gNum[3], 100.f, "%", 1);
     }
     CLAY(CLAY_ID("RotCard"), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(12), .childGap = 6}, RCARD}) {
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 10, .childAlignment = AL_Y}}) {
-            IconBtn(CLAY_ID("RotReset"), I_ROT, 34, 24, C_DIM, false, 17);
+            if (IconBtn(CLAY_ID("RotReset"), I_ROT, 34, 24, C_DIM, false, 17)) gRotT = 0.f;
             Tx("Rotation", 18, C_TEXT, 0);
             HSPACE
-            CLAY_AUTO_ID({.layout = {.sizing = {FIX(128), FIX(36)}}}) {
-                NumField(10, "0", "\xC2\xB0");
-            }
+            ValBox(RotStr(gRot), "\xC2\xB0", 128, 36, 18);
         }
         Clay_ElementId rid = CLAY_ID("RotRuler");
         Bs b = Interact(rid);
-        CLAY(rid, {.layout = {.sizing = {GROW, FIX(92)}}, .custom = {.customData = NC(K_ROTRULER, C_CARD, C_CARD, C_CARD, 0, b.hover, 0)}}) {}
+        if (Clay_PointerOver(rid) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) gDragId = rid.id;
+        gRotDrag = false;
+        if (gDragId == rid.id) {
+            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                Clay_BoundingBox bb = Clay_GetElementData(rid).boundingBox;
+                if (bb.width > 48) {
+                    float t = (GetMousePosition().x - (bb.x + 24)) / (bb.width - 48);
+                    t = t < 0 ? 0 : t > 1 ? 1 : t;
+                    gRot = gRotT = -180.f + 360.f * t;
+                }
+                gRotDrag = true;
+            } else gDragId = 0;
+        }
+        CLAY(rid, {.layout = {.sizing = {GROW, FIX(92)}}, .custom = {.customData = NC(K_ROTRULER, C_CARD, C_CARD, C_CARD, (gRot + 180.f) / 360.f, b.hover, 0)}}) {}
     }
     CLAY_AUTO_ID({.layout = {COLM, .sizing = {GROW, FIT}, .padding = {2, 2, 2, 0}, .childGap = 8}}) {
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = AL_Y}}) {
             Tx("Opacity", 18, C_TEXT, 0);
             HSPACE
-            CLAY_AUTO_ID({.layout = {.sizing = {FIX(80), FIX(28)}, .padding = {0, 10, 0, 0}, .childGap = 4, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER}},
-                          .backgroundColor = RGB(38, 39, 45), .cornerRadius = CLAY_CORNER_RADIUS(8)}) {
-                Tx("100", 16, C_TEXT, 0); Tx("%", 13, C_MUTED, 0);
-            }
+            ValBox(Fmt("%d", (int)roundf(gSl[0] * 100.f)), "%", 80, 28, 16);
         }
         Clay_ElementId sid = CLAY_ID("OpacitySlider");
         Bs b = Interact(sid);
+        SliderLogic(sid, 0, 8.f);
         CLAY(sid, {.layout = {.sizing = {GROW, FIX(18)}},
-                   .custom = {.customData = NC(K_SLIDER, RGB(52, 54, 61), RGB(52, 54, 61), C_CARD, 1.f, b.hover * 1.5f, 1)}}) {}
+                   .custom = {.customData = NC(K_SLIDER, RGB(52, 54, 61), RGB(52, 54, 61), C_CARD, gSl[0], (b.hover + (gSlDrag[0] ? 1.f : 0.f)) * 1.5f, 1)}}) {}
     }
     VSPACE
     NavSection();
 }
 
+/* ---------------- colors tab ---------------- */
 static void WheelItem(int i, const char *label) {
     CLAY(CLAY_IDI("WheelCol", i), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 6, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
         Clay_ElementId wid = CLAY_IDI("Wheel", i);
         Bs b = Interact(wid);
-        CLAY(wid, {.layout = {.sizing = {FIX(100), FIX(100)}}, .custom = {.customData = NC(K_WHEEL, C_CARD, C_CARD, C_CARD, 0, b.hover, 0)}}) {}
+        WheelLogic(i, wid);
+        float hue, len; WheelInfo(gWh[i], &hue, &len);
+        bool col = len > 0.02f;
+        Color dc = ColorFromHSV(hue, fminf(1.f, .3f + .7f * len), 1.f);
+        CLAY(wid, {.layout = {.sizing = {FIX(100), FIX(100)}},
+                   .custom = {.customData = NC(K_WHEEL, C_CARD, (Clay_Color){gWh[i].x, gWh[i].y, 0, 0}, (Clay_Color){dc.r, dc.g, dc.b, 255},
+                                               col ? 1.f : 0.f, fmaxf(b.hover * .6f, gWhDrag[i] ? 1.f : 0.f), 0)}}) {}
         Tx(label, 16, C_TEXT, 1);
-        Tx("Neutral", 13, RGB(140, 142, 150), 0);
+        if (col) Tx(Fmt("%d\xC2\xB0 \xC2\xB7 %d", (int)roundf(hue) % 360, (int)roundf(fminf(1.f, len) * 100.f)), 13, RGB(140, 142, 150), 0);
+        else     Tx("Neutral", 13, RGB(140, 142, 150), 0);
     }
 }
 
-static void AccHeader(int idx, const char *title, int icon, float openAnim) {
+static void AccHeader(int idx, const char *title, int icon, float openAnim, bool modified) {
     Clay_ElementId id = CLAY_IDI("AccHdr", idx);
     Bs b = Interact(id);
-    if (b.clicked) gAcc[idx] = !gAcc[idx];
+    if (b.clicked) {
+        if (gOpenAcc == idx) { gOpenAcc = -1; gFollow = false; }
+        else { gOpenAcc = idx; gFollow = (idx >= 3); }
+    }
     CLAY(id, {.layout = {.sizing = {GROW, FIX(52)}, .padding = {16, 14, 0, 0}, .childGap = 12, .childAlignment = AL_Y},
               .backgroundColor = BtnBg(Mix(C_RCARD, RGB(33, 34, 38), openAnim), Mix(RGB(36, 37, 43), RGB(40, 41, 47), openAnim), b), .cornerRadius = CLAY_CORNER_RADIUS(14),
               .border = {.color = Mix(Mix(C_RCARDB, RGB(62, 64, 72), openAnim), RGB(84, 87, 96), fmaxf(b.hover * 0.7f, b.press)), .width = CLAY_BORDER_OUTSIDE(1)}}) {
         Icon(icon, 22, C_DIM);
         Tx(title, 18, C_TEXT, 0);
         HSPACE
+        if (modified) {
+            CLAY_AUTO_ID({.layout = {.sizing = {FIX(6), FIX(6)}}, .backgroundColor = C_TEXT, .cornerRadius = CLAY_CORNER_RADIUS(3)}) {}
+            GAPX(2)
+        }
         CLAY_AUTO_ID({.layout = {.sizing = {FIX(26), FIX(26)}, .childAlignment = AL_C}, .cornerRadius = CLAY_CORNER_RADIUS(13),
                       .border = {.color = Mix(RGB(74, 77, 85), RGB(130, 134, 144), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
             IconV(I_PLUS, 13, C_DIM, 1.f - openAnim);
@@ -994,49 +1202,98 @@ static void AccHeader(int idx, const char *title, int icon, float openAnim) {
     }
 }
 
-static const char *kSliderNames[5][4] = {
-    {0, 0, 0, 0}, {"Hue", "Saturation", "Luminance", 0}, {"Exposure", "Contrast", "Highlights", "Shadows"},
-    {"Temperature", "Tint", "Saturation", 0}, {"Sharpness", "Clarity", "Grain", 0}
+static const char *kSliderNames[5][8] = {
+    {0}, {"Hue", "Saturation", "Lightness"},
+    {"Exposure", "Brightness", "Contrast", "Highlights", "Shadows", "Whites", "Blacks"},
+    {"Temperature", "Tint", "Saturation"}, {"Sharpness", "Clarity", "Vignette"}
 };
 /* last measured body heights (fallbacks until first measure) */
-static float gAccH[5] = {196.f, 156.f, 204.f, 156.f, 156.f};
+static float gAccH[5] = {250.f, 270.f, 410.f, 190.f, 190.f};
+
+static void SliderSpec(int idx, int s, int *mode, Clay_Color *a, Clay_Color *b) {
+    *mode = 0; *a = RGB(52, 54, 61); *b = *a;
+    if (idx == 1) {
+        if (s == 0) *mode = 4;
+        else if (s == 1) { *mode = 2; *a = RGB(96, 96, 102); *b = RGB(236, 64, 80); }
+        else             { *mode = 2; *a = RGB(8, 8, 10);    *b = RGB(240, 240, 244); }
+    } else if (idx == 3) {
+        *mode = 2;
+        if (s == 0)      { *a = RGB(70, 130, 230); *b = RGB(240, 170, 70); }
+        else if (s == 1) { *a = RGB(70, 200, 120); *b = RGB(220, 70, 190); }
+        else             { *a = RGB(110, 110, 116); *b = RGB(236, 64, 80); }
+    }
+}
+
+static void SliderRow(int idx, int s) {
+    int gi = idx * 8 + s, mode; Clay_Color a, b;
+    SliderSpec(idx, s, &mode, &a, &b);
+    bool uni = (idx == 4 && s == 0);
+    int val = uni ? (int)roundf(gSl[gi] * 100.f) : (int)roundf((gSl[gi] - .5f) * 200.f);
+    CLAY(CLAY_IDI("SRow", gi), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 6}}) {
+        CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = AL_Y}}) {
+            Tx(kSliderNames[idx][s], 14, C_DIM, 0);
+            HSPACE
+            ValBox(Fmt("%d", val), NULL, 62, 26, 14);
+        }
+        Clay_ElementId sid = CLAY_IDI("Slid", gi);
+        Bs bs = Interact(sid);
+        SliderLogic(sid, gi, 8.f);
+        CLAY(sid, {.layout = {.sizing = {GROW, FIX(18)}},
+                   .custom = {.customData = NC(K_SLIDER, a, b, C_CARD, gSl[gi], (bs.hover + (gSlDrag[gi] ? 1.f : 0.f)) * 1.5f, 1 | mode)}}) {}
+    }
+}
+
+static void Chip(int i) {
+    static const Clay_Color cc[9] = {{0,0,0,255}, {239,68,68,255}, {249,115,22,255}, {234,179,8,255}, {34,197,94,255},
+                                     {6,182,212,255}, {59,130,246,255}, {139,92,246,255}, {236,72,153,255}};
+    Clay_ElementId id = CLAY_IDI("Chip", i);
+    Bs b = Interact(id);
+    float sel = Anim(id.id + 3u, gHsl == i ? 1.f : 0.f, 30.f);
+    if (b.clicked) gHsl = i;
+    CLAY(id, {.layout = {.sizing = {FIX(30), FIX(30)}, .childAlignment = AL_C}, .cornerRadius = CLAY_CORNER_RADIUS(15),
+              .border = {.color = RGBA(240, 242, 246, 255.f * sel + 70.f * b.hover * (1.f - sel)), .width = CLAY_BORDER_OUTSIDE(2)}}) {
+        float sz = 22.f + 2.f * b.hover - 2.f * b.press;
+        CLAY_AUTO_ID({.layout = {.sizing = {FIX(sz), FIX(sz)}}, .custom = {.customData = NC(K_CHIP, cc[i], cc[i], cc[i], 0, 0, i == 0)}}) {}
+    }
+}
 
 static void Accordion(int idx, const char *title, int icon) {
     Clay_ElementId hid = CLAY_IDI("AccHdr", idx);
-    float o = EaseIO(AnimLin(hid.id, gAcc[idx] ? 1.f : 0.f, 0.2f));
+    float o = EaseIO(AnimLin(hid.id, gOpenAcc == idx ? 1.f : 0.f, 0.2f));
     float mh = Clay_GetElementData(CLAY_IDI("AccBody", idx)).boundingBox.height;
     if (mh > 1.f) gAccH[idx] = mh;
     float wrapH = roundf(o * (gAccH[idx] + 10.f));
     int n = 0;
-    if (idx > 0) while (n < 4 && kSliderNames[idx][n]) n++;
+    if (idx > 0) while (n < 7 && kSliderNames[idx][n]) n++;
+    bool modified = false;
+    if (idx == 0) for (int i = 0; i < 3; i++) if (fabsf(gWhT[i].x) + fabsf(gWhT[i].y) > 0.02f) modified = true;
     CLAY(CLAY_IDI("AccCol", idx), {.layout = {COLM, .sizing = {GROW, FIT}}}) {
-        AccHeader(idx, title, icon, o);
+        AccHeader(idx, title, icon, o, modified);
         if (wrapH >= 1.f) {
             CLAY(CLAY_IDI("AccWrap", idx), {.layout = {COLM, .sizing = {GROW, FIX(wrapH)}}, .clip = {.vertical = true}}) {
                 CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIX(10)}}}) {}
                 CLAY(CLAY_IDI("AccBody", idx), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(12), .childGap = 12}, RCARD}) {
-                    if (idx == 0) {
-                        CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT}}}) {
-                            Clay_ElementId rid = CLAY_ID("ResetGrade");
-                            Bs b = Interact(rid);
-                            CLAY(rid, {.layout = {.sizing = {FIT, FIT}, .childGap = 5, .childAlignment = AL_Y}}) {
-                                Icon(I_RESET, 14, Mix(RGB(140, 142, 150), C_TEXT, b.hover));
-                                Tx("Reset", 14, Mix(RGB(140, 142, 150), C_TEXT, b.hover), 0);
-                            }
+                    CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT}}}) {
+                        Clay_ElementId rid = CLAY_IDI("AccReset", idx);
+                        Bs b = Interact(rid);
+                        Clay_Color rc = Mix(RGB(140, 142, 150), C_TEXT, b.hover);
+                        CLAY(rid, {.layout = {.sizing = {FIT, FIT}, .childGap = 5, .childAlignment = AL_Y}}) {
+                            Icon(I_RESET, 14, rc);
+                            Tx("Reset", 14, rc, 0);
                         }
+                        if (b.clicked) ResetAcc(idx);
+                    }
+                    if (idx == 0) {
                         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 10}}) {
                             WheelItem(0, "Shadows"); WheelItem(1, "Tint"); WheelItem(2, "Highlights");
                         }
                     } else {
-                        for (int s = 0; s < n; s++) {
-                            CLAY(CLAY_IDI("SRow", idx * 8 + s), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 6}}) {
-                                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}}}) { Tx(kSliderNames[idx][s], 14, C_DIM, 0); HSPACE Tx("0", 14, C_MUTED, 0); }
-                                Clay_ElementId sid = CLAY_IDI("Slid", idx * 8 + s);
-                                Bs b = Interact(sid);
-                                CLAY(sid, {.layout = {.sizing = {GROW, FIX(18)}},
-                                           .custom = {.customData = NC(K_SLIDER, RGB(52, 54, 61), RGB(60, 62, 70), C_CARD, .5f, b.hover * 1.5f, 1)}}) {}
+                        if (idx == 1) {
+                            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 6}}) {
+                                for (int c = 0; c < 9; c++) Chip(c);
                             }
                         }
+                        for (int s = 0; s < n; s++) SliderRow(idx, s);
                     }
                 }
             }
@@ -1051,6 +1308,95 @@ static void ColorsView(void) {
         Accordion(2, "Light", I_SUN);
         Accordion(3, "Color", I_DROP);
         Accordion(4, "Detail", I_MOUNTAIN);
+    }
+}
+
+/* ---------------- effects tab ---------------- */
+typedef struct { Clay_Color a, b, sun; } FilterP;
+static const FilterP kFilters[8] = {
+    {{236,110,96,255},  {84,66,208,255},  {250,226,140,255}},
+    {{255,150,40,255},  {70,88,232,255},  {255,222,120,255}},
+    {{158,158,164,255}, {38,38,44,255},   {240,240,244,255}},
+    {{232,160,136,255}, {120,98,192,255}, {250,226,150,255}},
+    {{60,176,204,255},  {38,48,124,255},  {250,236,170,255}},
+    {{128,196,112,255}, {28,86,80,255},   {250,236,160,255}},
+    {{204,80,164,255},  {58,30,112,255},  {252,214,150,255}},
+    {{242,204,100,255}, {156,66,52,255},  {255,244,200,255}},
+};
+
+static void FilterThumb(int i) {
+    Clay_ElementId id = CLAY_IDI("Flt", i);
+    Bs b = Interact(id);
+    if (b.clicked) gFilter = i;
+    CLAY(id, {.layout = {.sizing = {GROW, FIX(84)}},
+              .custom = {.customData = NC(K_FILTER, kFilters[i].a, kFilters[i].b, kFilters[i].sun, 0, b.hover, gFilter == i)}}) {}
+}
+
+#define TRANS_DESC_H 46.f
+static void EffectsView(void) {
+    float o = EaseIO(AnimLin(CLAY_ID("TransAnim").id, gTransOpen ? 1.f : 0.f, 0.2f));
+    float dh = roundf(o * TRANS_DESC_H);
+    CLAY(CLAY_ID("TransCard"), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = {14, 14, 14, 14}}, RCARD}) {
+        Clay_ElementId hid = CLAY_ID("TransHdr");
+        Bs b = Interact(hid);
+        if (b.clicked) gTransOpen = !gTransOpen;
+        CLAY(hid, {.layout = {.sizing = {GROW, FIT}, .childGap = 10, .childAlignment = AL_Y}}) {
+            Icon(I_BOWTIE, 20, C_DIM);
+            Tx("Transitions", 16, C_TEXT, 1);
+            HSPACE
+            Icon(gTransOpen ? I_CHEV_DN : I_CHEV_R, 14, Mix(C_MUTED, C_TEXT, b.hover));
+        }
+        if (dh >= 1.f) {
+            CLAY(CLAY_ID("TransDesc"), {.layout = {COLM, .sizing = {GROW, FIX(dh)}}, .clip = {.vertical = true}}) {
+                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIX(8)}}}) {}
+                TxWrap("Place another clip right after this one to add a transition between them.", 14, C_MUTED, 0);
+            }
+        }
+    }
+    CLAY(CLAY_ID("FiltersCard"), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = {14, 14, 14, 14}, .childGap = 10}, RCARD}) {
+        Clay_ElementId fid = CLAY_ID("FiltersHdr");
+        Bs b = Interact(fid);
+        CLAY(fid, {.layout = {.sizing = {GROW, FIT}, .childGap = 10, .childAlignment = AL_Y}}) {
+            Icon(I_SPARKLE, 20, C_DIM);
+            Tx("Filters", 16, C_TEXT, 1);
+            HSPACE
+            Icon(I_CHEV_R, 14, Mix(C_MUTED, C_TEXT, b.hover));
+        }
+        CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = AL_Y}}) {
+            Tx("Filter presets", 13, C_MUTED, 0);
+            HSPACE
+            Clay_ElementId rid = CLAY_ID("FiltersReset");
+            Bs rb = Interact(rid);
+            Clay_Color rc = Mix(RGB(140, 142, 150), C_TEXT, rb.hover);
+            CLAY(rid, {.layout = {.sizing = {FIT, FIT}, .childGap = 5, .childAlignment = AL_Y}}) {
+                Icon(I_RESET, 14, rc);
+                Tx("Reset", 14, rc, 0);
+            }
+            if (rb.clicked) gFilter = 0;
+        }
+        for (int row = 0; row < 2; row++) {
+            CLAY(CLAY_IDI("FltRow", row), {.layout = {.sizing = {GROW, FIT}, .childGap = 8}}) {
+                for (int c = 0; c < 4; c++) FilterThumb(row * 4 + c);
+            }
+        }
+    }
+}
+
+/* ---------------- text tab ---------------- */
+static void TextView(void) {
+    CLAY(CLAY_ID("SubCard"), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(12), .childGap = 8}, RCARD}) {
+        CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 10, .childAlignment = AL_Y}}) {
+            Icon(I_FILM, 20, C_DIM);
+            Tx("Subtitles", 16, C_TEXT, 1);
+        }
+        CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .padding = {2, 0, 2, 0}}}) { Tx("Caption", 13, C_MUTED, 0); }
+        Clay_ElementId id = CLAY_ID("SubField");
+        Bs b = Interact(id);
+        CLAY(id, {.layout = {.sizing = {GROW, FIX(40)}, .padding = {12, 12, 0, 0}, .childAlignment = AL_Y},
+                  .backgroundColor = Mix(RGB(28, 29, 33), RGB(36, 37, 43), b.hover), .cornerRadius = CLAY_CORNER_RADIUS(10),
+                  .border = {.color = Mix(RGB(28, 29, 33), RGB(60, 62, 70), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+            Tx("Type a subtitle...", 14, RGB(112, 115, 124), 0);
+        }
     }
 }
 
@@ -1088,27 +1434,33 @@ static void UpdateInspScroll(void) {
 static void RightPanel(void) {
     static const char *tabs[4] = {"Transform", "Colors", "Effects", "Text"};
     static const int icons[4] = {I_CROP, I_PALETTE, I_SUN, I_TEXT};
+    float pill = Anim(CLAY_ID("PillAnim").id, (float)gRightTab, 20.f);
+    bool fitBody = (gRightTab == 3);
     CLAY(CLAY_ID("Right"), {.layout = {COLM, .sizing = {FIX(374), GROW}, .childGap = 10}}) {
-        /* outer panel border + inner segmented container with its own border */
         CLAY(CLAY_ID("InspTabs"), {.layout = {.sizing = {GROW, FIX(56)}, .padding = CLAY_PADDING_ALL(5)}, RPANEL}) {
             CLAY(CLAY_ID("InspSeg"), {.layout = {.sizing = {GROW, GROW}, .padding = CLAY_PADDING_ALL(4), .childGap = 4},
                                       .backgroundColor = RGB(12, 13, 15), .cornerRadius = CLAY_CORNER_RADIUS(12),
-                                      .border = {.color = RGB(24, 25, 28), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+                                      .border = {.color = RGB(24, 25, 28), .width = CLAY_BORDER_OUTSIDE(1)},
+                                      .custom = {.customData = NC(K_PILL, C_CARD, C_CARD, C_CARD, pill, 0, 0)}}) {
                 for (int i = 0; i < 4; i++)
                     if (TabBtn(CLAY_IDI("InspTab", i), tabs[i], gRightTab == i, 16, 9, true)) {
                         if (gRightTab != i) { gRightTab = i; gScroll = gScrollT = 0.f; gFollow = false; gTabT = 0.f; gTabE = 0.f; }
                     }
             }
         }
-        CLAY(CLAY_ID("InspBody"), {.layout = {.sizing = {GROW, GROW}}, RPANEL,
+        CLAY(CLAY_ID("InspBody"), {.layout = {.sizing = {GROW, fitBody ? FIT : GROW}}, RPANEL,
                                    .clip = {.vertical = true, .childOffset = {0, -gScroll + (1.f - gTabE) * 18.f}}}) {
-            CLAY(CLAY_ID("InspContent"), {.layout = {COLM, .sizing = {GROW, CLAY_SIZING_FIT(gInspViewH)}, .padding = CLAY_PADDING_ALL(14), .childGap = 10}}) {
-                CLAY(CLAY_ID("InspTitle"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 2, 4}, .childGap = 12, .childAlignment = AL_Y}}) {
-                    Icon(icons[gRightTab], 24, C_DIM);
-                    Tx(tabs[gRightTab], 24, C_TEXT, 1);
+            CLAY(CLAY_ID("InspContent"), {.layout = {COLM, .sizing = {GROW, fitBody ? FIT : CLAY_SIZING_FIT(gInspViewH)}, .padding = CLAY_PADDING_ALL(14), .childGap = 10}}) {
+                if (gRightTab != 2) {
+                    CLAY(CLAY_ID("InspTitle"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 2, 4}, .childGap = 12, .childAlignment = AL_Y}}) {
+                        Icon(icons[gRightTab], 24, C_DIM);
+                        Tx(tabs[gRightTab], 24, C_TEXT, 1);
+                    }
                 }
                 if (gRightTab == 0) TransformView();
                 else if (gRightTab == 1) ColorsView();
+                else if (gRightTab == 2) EffectsView();
+                else TextView();
             }
         }
     }
@@ -1187,6 +1539,8 @@ static void Timeline(void) {
 /* ------------------------------------------------------------------ */
 static Clay_RenderCommandArray BuildUI(void) {
     gClayAutoId = 0;
+    gFbN = 0;
+    TickState();
     UpdateInspScroll();
     Clay_BeginLayout();
     CLAY(CLAY_ID("Root"), {.layout = {COLM, .sizing = {GROW, GROW}, .padding = {8, 8, 0, 12}, .childGap = 10}, .backgroundColor = C_BG}) {
@@ -1229,6 +1583,8 @@ int main(void) {
     gFonts[1] = TryFont(bold, 7);
     if (gFonts[1].texture.id == GetFontDefault().texture.id) gFonts[1] = gFonts[0];
 
+    for (int i = 0; i < NSL; i++) gSl[i] = gSlT[i] = SlDefault(i);
+
     uint64_t mem = Clay_MinMemorySize();
     Clay_Arena arena = Clay_CreateArenaWithCapacityAndMemory(mem, malloc(mem));
     Clay_Initialize(arena, (Clay_Dimensions){(float)GetScreenWidth(), (float)GetScreenHeight()}, (Clay_ErrorHandler){OnClayError, 0});
@@ -1241,14 +1597,15 @@ int main(void) {
         Clay_SetPointerState((Clay_Vector2){m.x, m.y}, IsMouseButtonDown(MOUSE_BUTTON_LEFT));
         Clay_UpdateScrollContainers(false, (Clay_Vector2){0, GetMouseWheelMove() * 28.f}, gDt);
 
-        gCustN = 0; gHand = false;
+        if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) { gDragId = 0; gDragWheel = -1; }
+        gCustN = 0; gHand = false; gCross = false;
         Clay_RenderCommandArray cmds = BuildUI();
 
         BeginDrawing();
         ClearBackground((Color){14, 15, 17, 255});
         RenderUI(cmds);
         EndDrawing();
-        SetMouseCursor(gHand ? MOUSE_CURSOR_POINTING_HAND : MOUSE_CURSOR_DEFAULT);
+        SetMouseCursor(gCross ? MOUSE_CURSOR_CROSSHAIR : gHand ? MOUSE_CURSOR_POINTING_HAND : MOUSE_CURSOR_DEFAULT);
     }
     CloseWindow();
     return 0;
