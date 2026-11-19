@@ -3,20 +3,8 @@
  * Layout: Clay (https://github.com/nicbarker/clay, v0.14 API)
  * Renderer: raylib (custom renderer included below, no external clay renderer needed)
  *
- * Build (clay.h must sit next to this file):
- *   Linux:   gcc -O2 pluto_ui.c -o pluto -lraylib -lm -lGL -lpthread -ldl -lrt -lX11
- *   macOS:   clang -O2 pluto_ui.c -o pluto -lraylib -lm -framework IOKit -framework Cocoa -framework OpenGL
- *   Windows: gcc -O2 pluto_ui.c -o pluto.exe -lraylib -lopengl32 -lgdi32 -lwinmm
- *
- * Right panel (pixel-matched to the reference screenshot, measured 1:1):
- *   - sliding tab pill + fade/slide when switching Transform / Colors / Effects / Text
- *   - Transform: number steppers, link toggles, draggable rotation ruler + opacity slider,
- *     animated Crop Tools / Distort expanders
- *   - Colors: single-open animated accordions, draggable colour wheels (H° · S readout),
- *     HSL colour chips, gradient + plain draggable sliders, per-section Reset
- *   - Effects: collapsible Transitions card, Filters presets
- *   - Text: Subtitles card (panel shrinks to its content)
- * Everything else only gives hover / press feedback.
+ * Text rendering: every font size is rasterised at its exact pixel size (cached), so glyphs
+ * are drawn 1:1 with no texture down-scaling -> crisp text.
  *
  * Font note: put Inter-Regular.ttf and Inter-SemiBold.ttf in ./resources/ for the exact
  * glyph shapes of the reference. Font sizes are normalised, so any font renders at the
@@ -165,7 +153,6 @@ static Cust *NC(int k, Clay_Color a, Clay_Color b, Clay_Color c, float v, float 
 /* ------------------------------------------------------------------ */
 /* globals / state                                                     */
 /* ------------------------------------------------------------------ */
-static Font  gFonts[2];
 static float gFK[2] = {1.f, 1.f};   /* per-font size multiplier (normalises em size across fonts) */
 static float gDt;
 static bool  gHand, gCross;
@@ -188,11 +175,15 @@ static float gTabE = 1.f;                             /* eased */
 static Rectangle gFadeR; static float gFadeA;         /* fade overlay while switching */
 static bool  gSB; static Rectangle gSBR;              /* inspector scrollbar thumb */
 
+/* left panel state */
+static float gAudS, gAudT;                            /* audio panel scroll */
+static bool  gSwOn[2];                                /* fade in / fade out */
+
 /* values */
 static float gNum[4] = {0, 0, 100, 100};              /* X, Y, W, H */
 static float gRot, gRotT; static bool gRotDrag;       /* degrees -180..180 */
 #define NSL 48
-static float gSl[NSL], gSlT[NSL]; static bool gSlDrag[NSL]; /* slider 0..1 (0 = opacity) */
+static float gSl[NSL], gSlT[NSL]; static bool gSlDrag[NSL]; /* slider 0..1 (0 = opacity, 40/41 = fades) */
 static Vector2 gWh[3], gWhT[3]; static bool gWhDrag[3];     /* wheel puck, unit disk */
 static int   gHsl = 0;                                /* selected HSL chip */
 static bool  gTransOpen = true;                       /* effects: transitions card */
@@ -213,6 +204,32 @@ static const char *Fmt(const char *f, ...) {
     char *b = gFb[gFbN++ % 160];
     va_list ap; va_start(ap, f); vsnprintf(b, 40, f, ap); va_end(ap);
     return b;
+}
+
+/* ------------------------------------------------------------------ */
+/* crisp font cache: one atlas per (font, exact pixel size)            */
+/* ------------------------------------------------------------------ */
+static char gFontPath[2][260];
+static bool gFontOK[2];
+static int  gFcps[100], gFcpN;
+typedef struct { int slot, px; Font f; } FontEnt;
+static FontEnt gFC[96];
+static int gFCN;
+
+static int PxOf(int slot, float size) {
+    int p = (int)roundf(size * gFK[slot]);
+    return p < 6 ? 6 : p > 96 ? 96 : p;
+}
+static Font FontPx(int slot, int px) {
+    if (!gFontOK[slot]) return GetFontDefault();
+    for (int i = 0; i < gFCN; i++)
+        if (gFC[i].slot == slot && gFC[i].px == px) return gFC[i].f;
+    if (gFCN >= 96) return GetFontDefault();
+    Font f = LoadFontEx(gFontPath[slot], px, gFcps, gFcpN);
+    if (f.texture.id == 0) { gFontOK[slot] = false; return GetFontDefault(); }
+    SetTextureFilter(f.texture, TEXTURE_FILTER_BILINEAR);
+    gFC[gFCN].slot = slot; gFC[gFCN].px = px; gFC[gFCN].f = f;
+    return gFC[gFCN++].f;
 }
 
 /* ------------------------------------------------------------------ */
@@ -337,18 +354,23 @@ static bool TabBtn(Clay_ElementId id, const char *label, bool sel, float size, f
     Bs b = Interact(id);
     float s = Anim(id.id + 7, sel ? 1.f : 0.f, 45.f);
     Clay_Color bg;
+    uint16_t bw = 0;
+    Clay_Color bc = RGBA(0, 0, 0, 0);
     if (pill) {
-    /* the selected background is the sliding pill drawn by the segment itself;
-       no press flash, no hover/press tint on the right-panel tabs */
-    bg = RGBA(255, 255, 255, 0);
-} else {
+        /* the selected background is the sliding pill drawn by the segment itself;
+           no press flash, no hover/press tint on the right-panel tabs */
+        bg = RGBA(255, 255, 255, 0);
+    } else {
         float a = fmaxf(s * 255.f, b.hover * (1.f - s) * 60.f);
-        Clay_Color fill = RGB(46, 48, 55);
+        Clay_Color fill = RGB(44, 46, 52);
         bg = Mix(RGBA(fill.r, fill.g, fill.b, a), RGBA(90, 95, 106, 255), b.press * 0.55f);
+        bw = 1;
+        bc = RGBA(66, 68, 76, 255.f * s);
     }
     Clay_Color off = pill ? C_ICON : C_MUTED;
     CLAY(id, {.layout = {.sizing = {GROW, GROW}, .childAlignment = AL_C},
-              .backgroundColor = bg, .cornerRadius = CLAY_CORNER_RADIUS(rad)}) {
+              .backgroundColor = bg, .cornerRadius = CLAY_CORNER_RADIUS(rad),
+              .border = {.color = bc, .width = {.left = bw, .right = bw, .top = bw, .bottom = bw}}}) {
         Tx(label, size, Mix(off, C_TEXT, fmaxf(s, b.hover * 0.6f)), 0);
     }
     /* select on press, not release, so it feels instant */
@@ -433,9 +455,13 @@ static void Tri(Vector2 a, Vector2 b, Vector2 c, Color col) {
     DrawTriangle(a, b, c, col);
 }
 static void TxtAt(int font, const char *s, float x, float y, float size, Color c) {
-    DrawTextEx(gFonts[font], s, (Vector2){roundf(x), roundf(y)}, (size + 2.25f) * gFK[font], 0, c);
+    int px = PxOf(font, (float)(int)(size + 2.25f));
+    DrawTextEx(FontPx(font, px), s, (Vector2){roundf(x), roundf(y)}, (float)px, 0, c);
 }
-static float TxtW(int font, const char *s, float size) { return MeasureTextEx(gFonts[font], s, (size + 2.25f) * gFK[font], 0).x; }
+static float TxtW(int font, const char *s, float size) {
+    int px = PxOf(font, (float)(int)(size + 2.25f));
+    return MeasureTextEx(FontPx(font, px), s, (float)px, 0).x;
+}
 
 /* ------------------------------------------------------------------ */
 /* icons                                                               */
@@ -528,6 +554,17 @@ static void WheelInfo(Vector2 p, float *hue, float *len) {
     *hue = fmodf(atan2f(p.y, p.x) * RAD2DEG + 90.f + 360.f, 360.f);
 }
 
+/* media table (needed by the thumbnail renderer) */
+typedef struct { const char *name, *dur; Clay_Color sky1, sky2, mtn; int style; const char *label; } MediaItem;
+static const MediaItem kMedia[6] = {
+    {"Coastal morning.mp4",  "0:12", {86, 172, 200, 255}, {150, 214, 224, 255}, {70, 82, 104, 255}, 0, "COASTAL MORNING"},
+    {"City at dusk.mp4",     "0:09", {96, 48, 130, 255},  {186, 98, 160, 255},  {46, 30, 76, 255},  0, "CITY AT DUSK"},
+    {"Forest trail.mp4",     "0:15", {48, 128, 108, 255}, {118, 188, 150, 255}, {26, 58, 62, 255},  0, "FOREST TRAIL"},
+    {"Desert still.jpg",     "0:06", {126, 138, 154, 255}, {190, 196, 206, 255}, {76, 82, 100, 255}, 0, "DESERT STILL"},
+    {"Night harbor.jpg",     "0:06", {38, 38, 88, 255},   {62, 52, 112, 255},   {28, 28, 54, 255},  0, "NIGHT HARBOR"},
+    {"Ambient soundtrack.wav", "0:24", {150, 40, 150, 255}, {255, 134, 92, 255}, {0, 0, 0, 255},     1, NULL},
+};
+
 /* ------------------------------------------------------------------ */
 /* custom elements                                                     */
 /* ------------------------------------------------------------------ */
@@ -535,15 +572,25 @@ static void DrawCustom(Cust *cu, Rectangle r) {
     if (cu->kind < K_THUMB) { DrawIcon(cu->kind, r, RC(cu->a), cu->v); return; }
     switch (cu->kind) {
     case K_THUMB: {
-        GradRR(r, 8, RC(cu->a), RC(cu->b));
-        if (cu->i == 0) {
-            DrawCircleV((Vector2){r.x + .76f * r.width, r.y + .3f * r.height}, r.height * .16f, (Color){250, 228, 150, 255});
+        int style = cu->i & 15, idx = cu->i >> 4;
+        GradRR(r, 10, RC(cu->a), RC(cu->b));
+        if (style == 0) {
+            DrawCircleV((Vector2){r.x + .72f * r.width, r.y + .30f * r.height}, r.height * .17f, (Color){250, 228, 150, 255});
             Color m = RC(cu->c);
-            Tri((Vector2){r.x + .1f * r.width,  r.y + .92f * r.height}, (Vector2){r.x + .32f * r.width, r.y + .42f * r.height}, (Vector2){r.x + .6f * r.width,  r.y + .92f * r.height}, m);
-            Tri((Vector2){r.x + .38f * r.width, r.y + .92f * r.height}, (Vector2){r.x + .64f * r.width, r.y + .5f * r.height},  (Vector2){r.x + .92f * r.width, r.y + .92f * r.height}, LerpC(m, WHITE, .12f));
+            Tri((Vector2){r.x + .06f * r.width, r.y + r.height}, (Vector2){r.x + .30f * r.width, r.y + .40f * r.height}, (Vector2){r.x + .62f * r.width, r.y + r.height}, m);
+            Tri((Vector2){r.x + .36f * r.width, r.y + r.height}, (Vector2){r.x + .64f * r.width, r.y + .48f * r.height}, (Vector2){r.x + .94f * r.width, r.y + r.height}, LerpC(m, WHITE, .10f));
+            const char *lab = kMedia[idx].label;
+            if (lab) TxtAt(1, lab, r.x + 7, r.y + r.height - 33, 5, (Color){240, 240, 244, 235});
         }
-        FillRR(r, 8, (Color){255, 255, 255, U8(26 * cu->f)});
-        StrokeRR(r, 8, 1, (Color){255, 255, 255, U8(24 + 70 * cu->f)});
+        FillRR(r, 10, (Color){255, 255, 255, U8(20 * cu->f)});
+        StrokeRR(r, 10, 1, (Color){255, 255, 255, U8(20 + 60 * cu->f)});
+        if (cu->f > .03f) {
+            Rectangle pb = {r.x + r.width - 30, r.y + 6, 24, 24};
+            FillRR(pb, 7, (Color){246, 246, 249, U8(255 * fminf(1.f, cu->f * 1.4f))});
+            Color d = (Color){30, 31, 36, U8(255 * fminf(1.f, cu->f * 1.4f))};
+            DrawLineEx((Vector2){pb.x + 7, pb.y + 12}, (Vector2){pb.x + 17, pb.y + 12}, 2.f, d);
+            DrawLineEx((Vector2){pb.x + 12, pb.y + 7}, (Vector2){pb.x + 12, pb.y + 17}, 2.f, d);
+        }
     } break;
 
     case K_KNOB: {
@@ -553,7 +600,7 @@ static void DrawCustom(Cust *cu, Rectangle r) {
         RadGrad(c, rad - 1.5f, (Color){40, 41, 48, 255}, (Color){20, 21, 25, 255});
         float ang = (cu->v - .5f) * 4.7f;
         Vector2 d = {sinf(ang), -cosf(ang)};
-        DrawLineEx((Vector2){c.x + d.x * rad * .72f, c.y + d.y * rad * .72f}, (Vector2){c.x + d.x * rad * .9f, c.y + d.y * rad * .9f}, 3.f, (Color){228, 229, 233, 255});
+        DrawLineEx((Vector2){c.x + d.x * rad * .74f, c.y + d.y * rad * .74f}, (Vector2){c.x + d.x * rad * .88f, c.y + d.y * rad * .88f}, 3.f, (Color){228, 229, 233, 255});
     } break;
 
     case K_WHEEL: {
@@ -664,9 +711,13 @@ static void DrawCustom(Cust *cu, Rectangle r) {
         StrokeRR(r, 6, 2, (Color){245, 245, 250, 255});
     } break;
 
-    case K_SCROLLBAR:
-        FillRR((Rectangle){r.x, r.y, r.width, r.height * .9f}, r.width / 2, (Color){58, 60, 67, 255});
-        break;
+    case K_SCROLLBAR: {
+        /* v = scroll position 0..1, f = visible fraction (>=1 means nothing to scroll) */
+        if (cu->f >= .999f) break;
+        float th = fmaxf(30.f, r.height * cu->f);
+        float ty = r.y + (r.height - th) * cu->v;
+        FillRR((Rectangle){r.x, ty, r.width, th}, r.width / 2, (Color){84, 87, 96, 255});
+    } break;
 
     case K_PILL: {
         /* segmented control: dark track + sliding selection pill; v = fractional tab index.
@@ -759,7 +810,8 @@ static void RenderUI(Clay_RenderCommandArray cmds) {
             Clay_TextRenderData *d = &rc->renderData.text;
             char buf[512]; int n = d->stringContents.length < 511 ? d->stringContents.length : 511;
             memcpy(buf, d->stringContents.chars, n); buf[n] = 0;
-            DrawTextEx(gFonts[d->fontId], buf, (Vector2){roundf(r.x), roundf(r.y)}, d->fontSize * gFK[d->fontId], d->letterSpacing, RC(d->textColor));
+            int px = PxOf(d->fontId, (float)d->fontSize);
+            DrawTextEx(FontPx(d->fontId, px), buf, (Vector2){roundf(r.x), roundf(r.y)}, (float)px, d->letterSpacing, RC(d->textColor));
         } break;
         case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: {
             float x0 = roundf(r.x), y0 = roundf(r.y), x1 = roundf(r.x + r.width), y1 = roundf(r.y + r.height);
@@ -800,7 +852,8 @@ static Clay_Dimensions MeasureTxt(Clay_StringSlice t, Clay_TextElementConfig *cf
     (void)u;
     char buf[512]; int n = t.length < 511 ? t.length : 511;
     memcpy(buf, t.chars, n); buf[n] = 0;
-    Vector2 v = MeasureTextEx(gFonts[cfg->fontId], buf, cfg->fontSize * gFK[cfg->fontId], cfg->letterSpacing);
+    int px = PxOf(cfg->fontId, (float)cfg->fontSize);
+    Vector2 v = MeasureTextEx(FontPx(cfg->fontId, px), buf, (float)px, cfg->letterSpacing);
     return (Clay_Dimensions){v.x, v.y};
 }
 static void OnClayError(Clay_ErrorData e) { printf("Clay error: %.*s\n", e.errorText.length, e.errorText.chars); }
@@ -840,40 +893,35 @@ static void TopBar(void) {
 /* ------------------------------------------------------------------ */
 /* UI: library (left)                                                  */
 /* ------------------------------------------------------------------ */
-typedef struct { const char *name, *dur; Clay_Color sky1, sky2, mtn; int style; } MediaItem;
-static const MediaItem kMedia[6] = {
-    {"Coastal morning.m...", "0:12", {86, 172, 200, 255}, {150, 214, 224, 255}, {88, 98, 116, 255}, 0},
-    {"City at dusk.mp4",     "0:09", {106, 52, 138, 255}, {188, 98, 160, 255}, {58, 36, 88, 255}, 0},
-    {"Forest trail.mp4",     "0:15", {48, 128, 108, 255}, {118, 188, 150, 255}, {32, 68, 70, 255}, 0},
-    {"Desert still.jpg",     "0:06", {126, 138, 154, 255}, {190, 196, 206, 255}, {92, 98, 114, 255}, 0},
-    {"Night harbor.jpg",     "0:06", {38, 38, 88, 255}, {62, 52, 112, 255}, {34, 34, 60, 255}, 0},
-    {"Ambient soundtrac...", "0:24", {150, 40, 150, 255}, {255, 134, 92, 255}, {0, 0, 0, 255}, 1},
-};
+static void ValBox(const char *s, const char *unit, float w, float h, float fs, float ufs, float pad);
+static void SliderLogic(Clay_ElementId id, int gi, float kr);
 
 static void MediaView(void) {
-    Clay_ElementId sid = CLAY_ID("Search");
-    Bs sb = Interact(sid);
-    CLAY(sid, {.layout = {.sizing = {GROW, FIX(38)}, .padding = {12, 12, 0, 0}, .childGap = 8, .childAlignment = AL_Y},
-               .backgroundColor = Mix(RGB(30, 31, 36), RGB(36, 37, 43), sb.hover), .cornerRadius = CLAY_CORNER_RADIUS(10)}) {
-        Icon(I_SEARCH, 14, C_MUTED);
-        Tx("Search media", 12, C_MUTED, 0);
-    }
-    for (int row = 0; row < 3; row++) {
-        CLAY(CLAY_IDI("MRow", row), {.layout = {.sizing = {GROW, FIT}, .childGap = 10}}) {
-            for (int col = 0; col < 2; col++) {
-                int i = row * 2 + col;
-                const MediaItem *m = &kMedia[i];
-                CLAY(CLAY_IDI("Media", i), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 6}}) {
-                    Clay_ElementId tid = CLAY_IDI("Thumb", i);
-                    Bs b = Interact(tid);
-                    CLAY(tid, {.layout = {.sizing = {GROW, FIX(66)}, .padding = {5, 5, 5, 5}, .childAlignment = {.y = CLAY_ALIGN_Y_BOTTOM}},
-                               .custom = {.customData = NC(K_THUMB, m->sky1, m->sky2, m->mtn, 0, b.hover, m->style)}}) {
-                        CLAY_AUTO_ID({.layout = {.sizing = {FIT, FIT}, .padding = {5, 5, 1, 2}},
-                                      .backgroundColor = RGBA(0, 0, 0, 150), .cornerRadius = CLAY_CORNER_RADIUS(4)}) {
-                            Tx(m->dur, 10, C_TEXT, 1);
+    CLAY(CLAY_ID("MediaCol"), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 9}}) {
+        Clay_ElementId sid = CLAY_ID("Search");
+        Bs sb = Interact(sid);
+        CLAY(sid, {.layout = {.sizing = {GROW, FIX(34)}, .padding = {13, 12, 0, 0}, .childGap = 9, .childAlignment = AL_Y},
+                   .backgroundColor = Mix(RGB(30, 31, 36), RGB(36, 37, 43), sb.hover), .cornerRadius = CLAY_CORNER_RADIUS(11)}) {
+            Icon(I_SEARCH, 15, C_MUTED);
+            Tx("Search media", 12, C_MUTED, 0);
+        }
+        for (int row = 0; row < 3; row++) {
+            CLAY(CLAY_IDI("MRow", row), {.layout = {.sizing = {GROW, FIT}, .childGap = 9}}) {
+                for (int col = 0; col < 2; col++) {
+                    int i = row * 2 + col;
+                    const MediaItem *m = &kMedia[i];
+                    CLAY(CLAY_IDI("Media", i), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 6}}) {
+                        Clay_ElementId tid = CLAY_IDI("Thumb", i);
+                        Bs b = Interact(tid);
+                        CLAY(tid, {.layout = {.sizing = {GROW, FIX(77)}, .padding = {6, 6, 6, 6}, .childAlignment = {.y = CLAY_ALIGN_Y_BOTTOM}},
+                                   .custom = {.customData = NC(K_THUMB, m->sky1, m->sky2, m->mtn, 0, b.hover, m->style | (i << 4))}}) {
+                            CLAY_AUTO_ID({.layout = {.sizing = {FIT, FIT}, .padding = {5, 5, 1, 2}},
+                                          .backgroundColor = RGBA(0, 0, 0, 150), .cornerRadius = CLAY_CORNER_RADIUS(5)}) {
+                                Tx(m->dur, 9, C_TEXT, 1);
+                            }
                         }
+                        Tx(m->name, 9, C_MUTED, 0);
                     }
-                    Tx(m->name, 11, C_MUTED, 0);
                 }
             }
         }
@@ -884,12 +932,12 @@ static void KnobGroup(int idx, const char *label, const char *val) {
     CLAY(CLAY_IDI("KG", idx), {.layout = {COLM, .sizing = {FIT, FIT}, .childGap = 5, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
         Clay_ElementId kid = CLAY_IDI("Knob", idx);
         Bs b = Interact(kid);
-        CLAY(kid, {.layout = {.sizing = {FIX(70), FIX(70)}}, .custom = {.customData = NC(K_KNOB, C_CARD, C_CARD, C_CARD, .5f, b.hover, 0)}}) {}
-        Tx(label, 11, C_MUTED, 0);
-        CLAY_AUTO_ID({.layout = {.sizing = {FIX(64), FIX(24)}, .childAlignment = AL_C},
-                      .backgroundColor = RGB(28, 29, 34), .cornerRadius = CLAY_CORNER_RADIUS(6),
+        CLAY(kid, {.layout = {.sizing = {FIX(69), FIX(69)}}, .custom = {.customData = NC(K_KNOB, C_CARD, C_CARD, C_CARD, .5f, b.hover, 0)}}) {}
+        Tx(label, 9, C_MUTED, 0);
+        CLAY_AUTO_ID({.layout = {.sizing = {FIX(62), FIX(23)}, .childAlignment = AL_C},
+                      .backgroundColor = RGB(28, 29, 34), .cornerRadius = CLAY_CORNER_RADIUS(7),
                       .border = {.color = RGB(40, 42, 48), .width = CLAY_BORDER_OUTSIDE(1)}}) {
-            Tx(val, 12, C_TEXT, 0);
+            Tx(val, 10, C_TEXT, 0);
         }
     }
 }
@@ -897,59 +945,91 @@ static void KnobGroup(int idx, const char *label, const char *val) {
 static void SwitchItem(int idx, const char *label) {
     Clay_ElementId id = CLAY_IDI("Switch", idx);
     Bs b = Interact(id);
+    if (b.clicked) gSwOn[idx] = !gSwOn[idx];
+    float on = Anim(id.id + 5u, gSwOn[idx] ? 1.f : 0.f, 22.f);
     CLAY(id, {.layout = {.sizing = {FIT, FIT}, .childGap = 8, .childAlignment = AL_Y}}) {
-        CLAY_AUTO_ID({.layout = {.sizing = {FIX(40), FIX(24)}},
-                      .custom = {.customData = NC(K_SWITCH, C_CARD, C_CARD, C_CARD, 0, b.hover * 1.f - b.press * 1.5f, 0)}}) {}
-        Tx(label, 11, C_MUTED, 0);
+        CLAY_AUTO_ID({.layout = {.sizing = {FIX(38), FIX(22)}},
+                      .custom = {.customData = NC(K_SWITCH, C_CARD, C_CARD, C_CARD, on, b.hover * 1.f - b.press * 1.5f, 0)}}) {}
+        Tx(label, 10, C_MUTED, 0);
+    }
+}
+
+static void DurRow(int gi, const char *label) {
+    CLAY_AUTO_ID({.layout = {COLM, .sizing = {GROW, FIT}, .padding = {3, 0, 0, 0}, .childGap = 4}}) {
+        CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = AL_Y}}) {
+            Tx(label, 10, C_DIM, 0);
+            HSPACE
+            ValBox(Fmt("%d", 1 + (int)roundf(gSl[gi] * 9.f)), "s", 54, 26, 10, 8, 10);
+        }
+        Clay_ElementId sid = CLAY_IDI("Dur", gi);
+        Bs bs = Interact(sid);
+        SliderLogic(sid, gi, 7.f);
+        CLAY(sid, {.layout = {.sizing = {GROW, FIX(18)}},
+                   .custom = {.customData = NC(K_SLIDER, RGB(40, 42, 48), RGB(40, 42, 48), C_CARD, gSl[gi],
+                                               (bs.hover + (gSlDrag[gi] ? 1.f : 0.f)) * 1.5f, 0)}}) {}
     }
 }
 
 static void AudioView(void) {
-    CLAY(CLAY_ID("AudioHead"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 0, 0}, .childGap = 8, .childAlignment = AL_Y}}) {
-        Icon(I_NOTE, 18, C_DIM);
-        Tx("Audio", 15, C_TEXT, 1);
+    /* scrolling (uses last frame's measured sizes) */
+    Clay_BoundingBox vb = Clay_GetElementData(CLAY_ID("AudioScroll")).boundingBox;
+    Clay_BoundingBox cb = Clay_GetElementData(CLAY_ID("AudioContent")).boundingBox;
+    float maxS = fmaxf(0.f, cb.height - vb.height);
+    float wh = GetMouseWheelMove();
+    Vector2 mp = GetMousePosition();
+    if (wh != 0.f && vb.width > 0.f && mp.x >= vb.x && mp.x <= vb.x + vb.width + 12 && mp.y >= vb.y && mp.y <= vb.y + vb.height)
+        gAudT -= wh * 50.f;
+    if (gAudT > maxS) gAudT = maxS;
+    if (gAudT < 0.f) gAudT = 0.f;
+    gAudS += (gAudT - gAudS) * (1.f - expf(-20.f * gDt));
+    if (fabsf(gAudT - gAudS) < 0.3f) gAudS = gAudT;
+    if (gAudS > maxS) gAudS = maxS;
+    float sv = maxS > 1.f ? gAudS / maxS : 0.f;
+    float sf = maxS > 1.f && cb.height > 1.f ? vb.height / cb.height : 1.f;
+
+    CLAY(CLAY_ID("AudioHead"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 6, 0}, .childGap = 10, .childAlignment = AL_Y}}) {
+        Icon(I_NOTE, 20, C_DIM);
+        Tx("Audio", 16, C_TEXT, 1);
     }
     CLAY(CLAY_ID("AudioBody"), {.layout = {.sizing = {GROW, GROW}, .childGap = 6}}) {
-        CLAY(CLAY_ID("AudioScroll"), {.layout = {COLM, .sizing = {GROW, GROW}, .childGap = 10, .padding = {2, 0, 0, 8}},
-                                      .clip = {.vertical = true, .childOffset = Clay_GetScrollOffset()}}) {
-            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) { KnobGroup(0, "Volume", "100 %"); }
-            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .padding = {4, 4, 0, 0}}}) { KnobGroup(1, "Pan", "0"); HSPACE KnobGroup(2, "Bass", "0 dB"); }
-            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) { KnobGroup(3, "Treble", "0 dB"); }
-            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .padding = {6, 0, 8, 0}, .childGap = 18}}) { SwitchItem(0, "Fade In"); SwitchItem(1, "Fade Out"); }
-            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .padding = {2, 4, 0, 0}, .childAlignment = AL_Y}}) {
-                Tx("Fade In Duration", 11, C_TEXT, 0);
-                HSPACE
-                CLAY_AUTO_ID({.layout = {.sizing = {FIX(64), FIX(28)}, .padding = {0, 10, 0, 0}, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER}, .childGap = 4},
-                              .backgroundColor = RGB(30, 31, 36), .cornerRadius = CLAY_CORNER_RADIUS(6)}) {
-                    Tx("1", 12, C_TEXT, 0); Tx("s", 10, C_MUTED, 0);
+        CLAY(CLAY_ID("AudioScroll"), {.layout = {.sizing = {GROW, GROW}},
+                                      .clip = {.vertical = true, .childOffset = {0, -gAudS}}}) {
+            CLAY(CLAY_ID("AudioContent"), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 10, .padding = {0, 0, 0, 12}}}) {
+                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) { KnobGroup(0, "Volume", "100 %"); }
+                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .padding = {22, 22, 0, 0}}}) { KnobGroup(1, "Pan", "0"); HSPACE KnobGroup(2, "Bass", "0 dB"); }
+                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) { KnobGroup(3, "Treble", "0 dB"); }
+                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .padding = {0, 0, 14, 4}, .childGap = 40, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
+                    SwitchItem(0, "Fade In"); SwitchItem(1, "Fade Out");
                 }
+                DurRow(40, "Fade In Duration");
+                DurRow(41, "Fade Out Duration");
             }
-            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIX(18)}, .padding = {2, 2, 0, 0}},
-                          .custom = {.customData = NC(K_SLIDER, RGB(48, 50, 57), RGB(70, 73, 82), C_CARD, 0.05f, 0, 0)}}) {}
         }
-        CLAY(CLAY_ID("AudioScrollbar"), {.layout = {.sizing = {FIX(4), GROW}}, .custom = {.customData = NC(K_SCROLLBAR, C_CARD, C_CARD, C_CARD, 0, 0, 0)}}) {}
+        CLAY(CLAY_ID("AudioBar"), {.layout = {.sizing = {CLAY_SIZING_FIXED(3), GROW}},
+                                   .custom = {.customData = NC(K_SCROLLBAR, C_CARD, C_CARD, C_CARD, sv, sf, 0)}}) {}
     }
 }
 
 static void LeftPanel(void) {
-    CLAY(CLAY_ID("Library"), {.layout = {COLM, .sizing = {FIX(242), GROW}, .padding = {12, 12, 14, 12}, .childGap = 14}, PANEL}) {
-        CLAY(CLAY_ID("LibHead"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 0, 0}, .childGap = 8, .childAlignment = AL_Y}}) {
-            Icon(I_LIBRARY, 18, C_DIM);
-            Tx("Library", 15, C_TEXT, 1);
+    CLAY(CLAY_ID("Library"), {.layout = {COLM, .sizing = {FIX(286), GROW}, .padding = {13, 13, 12, 12}, .childGap = 12}, PANEL}) {
+        CLAY(CLAY_ID("LibHead"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 0, 0}, .childGap = 10, .childAlignment = AL_Y}}) {
+            Icon(I_LIBRARY, 20, C_DIM);
+            Tx("Library", 16, C_TEXT, 1);
             HSPACE
             Clay_ElementId imp = CLAY_ID("Import");
             Bs b = Interact(imp);
-            CLAY(imp, {.layout = {.sizing = {FIT, FIX(28)}, .padding = {10, 12, 0, 0}, .childGap = 5, .childAlignment = AL_Y},
-                       .backgroundColor = BtnBg(RGB(28, 29, 34), RGB(40, 42, 48), b), .cornerRadius = CLAY_CORNER_RADIUS(9)}) {
-                Icon(I_PLUS, 11, C_DIM);
+            CLAY(imp, {.layout = {.sizing = {FIT, FIX(30)}, .padding = {12, 14, 0, 0}, .childGap = 6, .childAlignment = AL_Y},
+                       .backgroundColor = BtnBg(RGB(28, 29, 34), RGB(40, 42, 48), b), .cornerRadius = CLAY_CORNER_RADIUS(10),
+                       .border = {.color = Mix(RGB(38, 40, 46), RGB(66, 68, 76), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+                Icon(I_PLUS, 12, C_DIM);
                 Tx("Import", 12, C_TEXT, 0);
             }
         }
-        CLAY(CLAY_ID("LibTabs"), {.layout = {.sizing = {GROW, FIX(40)}, .padding = CLAY_PADDING_ALL(4), .childGap = 4},
-                                  .backgroundColor = C_SEG, .cornerRadius = CLAY_CORNER_RADIUS(12),
+        CLAY(CLAY_ID("LibTabs"), {.layout = {.sizing = {GROW, FIX(34)}, .padding = CLAY_PADDING_ALL(4), .childGap = 4},
+                                  .backgroundColor = C_SEG, .cornerRadius = CLAY_CORNER_RADIUS(13),
                                   .border = {.color = RGB(30, 32, 37), .width = CLAY_BORDER_OUTSIDE(1)}}) {
-            if (TabBtn(CLAY_IDI("LibTab", 0), "Media", gLeftTab == 0, 12, 9, false)) gLeftTab = 0;
-            if (TabBtn(CLAY_IDI("LibTab", 1), "Audio", gLeftTab == 1, 12, 9, false)) gLeftTab = 1;
+            if (TabBtn(CLAY_IDI("LibTab", 0), "Media", gLeftTab == 0, 12, 10, false)) gLeftTab = 0;
+            if (TabBtn(CLAY_IDI("LibTab", 1), "Audio", gLeftTab == 1, 12, 10, false)) gLeftTab = 1;
         }
         if (gLeftTab == 0) MediaView(); else AudioView();
     }
@@ -1009,6 +1089,7 @@ static void CenterPanel(void) {
 /* ------------------------------------------------------------------ */
 static float SlDefault(int gi) {
     if (gi == 0) return 1.f;                 /* opacity */
+    if (gi == 40 || gi == 41) return 0.f;    /* fade durations */
     if (gi / 8 == 4 && gi % 8 == 0) return 0.f; /* sharpness starts at 0 */
     return .5f;
 }
@@ -1709,24 +1790,21 @@ static float FontEmRatio(const char *path) {
     return k;
 }
 
-static Font TryFont(const char **paths, int n, int slot) {
-    int cps[100], k = 0;
-    for (int c = 32; c < 127; c++) cps[k++] = c;
-    cps[k++] = 0xB0; cps[k++] = 0xD7; cps[k++] = 0xB7; cps[k++] = 0x2026;
+/* pick the first existing font file; atlases are rasterised lazily per exact pixel size */
+static bool FindFont(const char **paths, int n, int slot) {
     for (int i = 0; i < n; i++) {
         if (FileExists(paths[i])) {
-            Font f = LoadFontEx(paths[i], 96, cps, k);
-            if (f.texture.id > 0) {
-                SetTextureFilter(f.texture, TEXTURE_FILTER_BILINEAR);
-                /* every size in this file was tuned on Segoe UI (ratio 0.752); keep the same em for any other font */
-                float er = FontEmRatio(paths[i]);
-                gFK[slot] = (er > 0.3f && er < 1.3f) ? 0.752f / er : 1.f;
-                return f;
-            }
+            /* every size in this file was tuned on Segoe UI (ratio 0.752); keep the same em for any other font */
+            float er = FontEmRatio(paths[i]);
+            gFK[slot] = (er > 0.3f && er < 1.3f) ? 0.752f / er : 1.f;
+            strncpy(gFontPath[slot], paths[i], sizeof(gFontPath[slot]) - 1);
+            gFontPath[slot][sizeof(gFontPath[slot]) - 1] = 0;
+            gFontOK[slot] = true;
+            return true;
         }
     }
     gFK[slot] = 1.f;
-    return GetFontDefault();
+    return false;
 }
 
 #ifdef _WIN32
@@ -1784,9 +1862,16 @@ int main(void) {
     const char *bold[] = {"resources/Inter-SemiBold.ttf", "Inter-SemiBold.ttf", "C:/Windows/Fonts/seguisb.ttf", "C:/Windows/Fonts/segoeuib.ttf",
                           "/System/Library/Fonts/Supplemental/Arial Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
                           "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"};
-    gFonts[0] = TryFont(reg, 6, 0);
-    gFonts[1] = TryFont(bold, 7, 1);
-    if (gFonts[1].texture.id == GetFontDefault().texture.id) { gFonts[1] = gFonts[0]; gFK[1] = gFK[0]; }
+    gFcpN = 0;
+    for (int c = 32; c < 127; c++) gFcps[gFcpN++] = c;
+    gFcps[gFcpN++] = 0xB0; gFcps[gFcpN++] = 0xD7; gFcps[gFcpN++] = 0xB7; gFcps[gFcpN++] = 0x2026;
+    bool okR = FindFont(reg, 6, 0);
+    bool okB = FindFont(bold, 7, 1);
+    if (!okB && okR) {
+        strcpy(gFontPath[1], gFontPath[0]);
+        gFontOK[1] = true;
+        gFK[1] = gFK[0];
+    }
 
     for (int i = 0; i < NSL; i++) gSl[i] = gSlT[i] = SlDefault(i);
 
