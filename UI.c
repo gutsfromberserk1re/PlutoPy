@@ -11,6 +11,7 @@
  * Buttons only give hover / press feedback. The only things that change state
  * are the tab bars and the accordions, so you can see both of your screenshots.
  */
+/* ClayCompatDeclaration: Clay v0.14 single-declaration CLAY() API port. */
 #define CLAY_IMPLEMENTATION
 #include "clay.h"
 #include "raylib.h"
@@ -49,9 +50,9 @@
 #define COLM        .layoutDirection = CLAY_TOP_TO_BOTTOM
 #define AL_C        {.x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER}
 #define AL_Y        {.y = CLAY_ALIGN_Y_CENTER}
-#define HSPACE      CLAY_AUTO_ID({.layout = {.sizing = {.width = GROW}}}) {}
-#define VSPACE      CLAY_AUTO_ID({.layout = {.sizing = {.height = GROW}}}) {}
-#define GAPX(n)     CLAY_AUTO_ID({.layout = {.sizing = {.width = FIX(n), .height = FIX(1)}}}) {}
+#define HSPACE      CLAY({.layout = {.sizing = {.width = GROW}}}) {}
+#define VSPACE      CLAY({.layout = {.sizing = {.height = GROW}}}) {}
+#define GAPX(n)     CLAY({.layout = {.sizing = {.width = FIX(n), .height = FIX(1)}}}) {}
 #define PANEL       .backgroundColor = C_PANEL, .cornerRadius = CLAY_CORNER_RADIUS(16), \
                     .border = {.color = RGB(45,47,53), .width = CLAY_BORDER_OUTSIDE(1)}
 #define CARD        .backgroundColor = C_CARD, .cornerRadius = CLAY_CORNER_RADIUS(14), \
@@ -140,7 +141,7 @@ static void Tx(const char *s, float size, Clay_Color c, int font) {
     CLAY_TEXT(S(s), CLAY_TEXT_CONFIG({.fontId = font, .fontSize = size, .textColor = c, .wrapMode = CLAY_TEXT_WRAP_NONE}));
 }
 static void IconV(int k, float sz, Clay_Color c, float v) {
-    CLAY_AUTO_ID({.layout = {.sizing = {.width = FIX(sz), .height = FIX(sz)}},
+    CLAY({.layout = {.sizing = {.width = FIX(sz), .height = FIX(sz)}},
                   .custom = {.customData = NC(k, c, c, c, v, 0, 0)}}) {}
 }
 static void Icon(int k, float sz, Clay_Color c) { IconV(k, sz, c, 1.f); }
@@ -149,8 +150,8 @@ static bool IconBtn(Clay_ElementId id, int icon, float box, float isz, Clay_Colo
     Bs b = Interact(id);
     Clay_Color ic = Dark(Mix(base, C_TEXT, b.hover), b.press * 0.2f);
     Clay_Color bg = sel ? Dark(C_SEL, b.press * 0.3f) : RGBA(255, 255, 255, 14 * b.hover + 12 * b.press);
-    CLAY(id, {.layout = {.sizing = {FIX(box), FIX(box)}, .childAlignment = AL_C},
-              .backgroundColor = bg, .cornerRadius = CLAY_CORNER_RADIUS(rad)}) {
+    CLAY({ .id = (id), .layout = {.sizing = {FIX(box), FIX(box)}, .childAlignment = AL_C},
+              .backgroundColor = bg, .cornerRadius = CLAY_CORNER_RADIUS(rad) }) {
         Icon(icon, isz, ic);
     }
     return b.clicked;
@@ -161,8 +162,8 @@ static bool TabBtn(Clay_ElementId id, const char *label, bool sel, float size, f
     float s = Anim(id.id + 7, sel ? 1.f : 0.f, 16.f);
     float a = fmaxf(s * 255.f, b.hover * (1.f - s) * 90.f);
     Clay_Color bg = Dark(RGBA(46, 48, 55, a), b.press * 0.3f);
-    CLAY(id, {.layout = {.sizing = {GROW, GROW}, .childAlignment = AL_C},
-              .backgroundColor = bg, .cornerRadius = CLAY_CORNER_RADIUS(rad)}) {
+    CLAY({ .id = (id), .layout = {.sizing = {GROW, GROW}, .childAlignment = AL_C},
+              .backgroundColor = bg, .cornerRadius = CLAY_CORNER_RADIUS(rad) }) {
         Tx(label, size, Mix(C_MUTED, C_TEXT, fmaxf(s, b.hover * 0.6f)), 0);
     }
     return b.clicked;
@@ -482,17 +483,17 @@ static void OnClayError(Clay_ErrorData e) { printf("Clay error: %.*s\n", e.error
 /* UI: top bar                                                         */
 /* ------------------------------------------------------------------ */
 static void TopBar(void) {
-    CLAY(CLAY_ID("TopBar"), {.layout = {.sizing = {GROW, FIX(46)}, .padding = {8, 10, 0, 0}, .childAlignment = AL_Y}}) {
-        CLAY(CLAY_ID("LeftCluster"), {.layout = {.sizing = {FIX(284), FIT}, .childAlignment = AL_Y}}) {
-            CLAY(CLAY_ID("Logo"), {.layout = {.sizing = {FIX(18), FIX(24)}, .childAlignment = AL_C}}) {
-                CLAY_AUTO_ID({.layout = {COLM, .sizing = {FIX(14), FIX(10)}, .childGap = 3}}) {
-                    CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIX(1)}}, .backgroundColor = C_DIM}) {}
-                    CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIX(1)}}, .backgroundColor = C_DIM}) {}
-                    CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIX(1)}}, .backgroundColor = C_DIM}) {}
+    CLAY({ .id = (CLAY_ID("TopBar")), .layout = {.sizing = {GROW, FIX(46)}, .padding = {8, 10, 0, 0}, .childAlignment = AL_Y} }) {
+        CLAY({ .id = (CLAY_ID("LeftCluster")), .layout = {.sizing = {FIX(284), FIT}, .childAlignment = AL_Y} }) {
+            CLAY({ .id = (CLAY_ID("Logo")), .layout = {.sizing = {FIX(18), FIX(24)}, .childAlignment = AL_C} }) {
+                CLAY({.layout = {COLM, .sizing = {FIX(14), FIX(10)}, .childGap = 3}}) {
+                    CLAY({.layout = {.sizing = {GROW, FIX(1)}}, .backgroundColor = C_DIM}) {}
+                    CLAY({.layout = {.sizing = {GROW, FIX(1)}}, .backgroundColor = C_DIM}) {}
+                    CLAY({.layout = {.sizing = {GROW, FIX(1)}}, .backgroundColor = C_DIM}) {}
                 }
             }
             GAPX(4)
-            CLAY_AUTO_ID({.layout = {.sizing = {FIX(1), FIX(24)}}, .backgroundColor = RGB(52, 54, 60)}) {}
+            CLAY({.layout = {.sizing = {FIX(1), FIX(24)}}, .backgroundColor = RGB(52, 54, 60)}) {}
             GAPX(10)
             Tx("Pluto", 15, C_TEXT, 1);
             GAPX(28)
@@ -500,9 +501,9 @@ static void TopBar(void) {
         }
         Clay_ElementId ex = CLAY_ID("Export");
         Bs b = Interact(ex);
-        CLAY(ex, {.layout = {.sizing = {FIT, FIX(32)}, .padding = {12, 14, 0, 0}, .childGap = 8, .childAlignment = AL_Y},
+        CLAY({ .id = (ex), .layout = {.sizing = {FIT, FIX(32)}, .padding = {12, 14, 0, 0}, .childGap = 8, .childAlignment = AL_Y},
                   .backgroundColor = BtnBg(RGB(27, 28, 33), RGB(38, 40, 46), b), .cornerRadius = CLAY_CORNER_RADIUS(9),
-                  .border = {.color = Mix(RGB(54, 56, 62), RGB(86, 89, 98), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+                  .border = {.color = Mix(RGB(54, 56, 62), RGB(86, 89, 98), b.hover), .width = CLAY_BORDER_OUTSIDE(1)} }) {
             Icon(I_EXPORT, 14, C_TEXT);
             Tx("Export", 13, C_TEXT, 1);
         }
@@ -529,22 +530,22 @@ static const MediaItem kMedia[6] = {
 static void MediaView(void) {
     Clay_ElementId sid = CLAY_ID("Search");
     Bs sb = Interact(sid);
-    CLAY(sid, {.layout = {.sizing = {GROW, FIX(34)}, .padding = {12, 12, 0, 0}, .childGap = 8, .childAlignment = AL_Y},
-               .backgroundColor = Mix(RGB(30, 31, 36), RGB(36, 37, 43), sb.hover), .cornerRadius = CLAY_CORNER_RADIUS(10)}) {
+    CLAY({ .id = (sid), .layout = {.sizing = {GROW, FIX(34)}, .padding = {12, 12, 0, 0}, .childGap = 8, .childAlignment = AL_Y},
+               .backgroundColor = Mix(RGB(30, 31, 36), RGB(36, 37, 43), sb.hover), .cornerRadius = CLAY_CORNER_RADIUS(10) }) {
         Icon(I_SEARCH, 14, C_MUTED);
         Tx("Search media", 12, C_MUTED, 0);
     }
     for (int row = 0; row < 3; row++) {
-        CLAY(CLAY_IDI("MRow", row), {.layout = {.sizing = {GROW, FIT}, .childGap = 10}}) {
+        CLAY({ .id = (CLAY_IDI("MRow", row)), .layout = {.sizing = {GROW, FIT}, .childGap = 10} }) {
             for (int col = 0; col < 2; col++) {
                 int i = row * 2 + col;
                 const MediaItem *m = &kMedia[i];
-                CLAY(CLAY_IDI("Media", i), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 6}}) {
+                CLAY({ .id = (CLAY_IDI("Media", i)), .layout = {COLM, .sizing = {GROW, FIT}, .childGap = 6} }) {
                     Clay_ElementId tid = CLAY_IDI("Thumb", i);
                     Bs b = Interact(tid);
-                    CLAY(tid, {.layout = {.sizing = {GROW, FIX(58)}, .padding = {5, 5, 5, 5}, .childAlignment = {.y = CLAY_ALIGN_Y_BOTTOM}},
-                               .custom = {.customData = NC(K_THUMB, m->sky1, m->sky2, m->mtn, 0, b.hover, m->style)}}) {
-                        CLAY_AUTO_ID({.layout = {.sizing = {FIT, FIT}, .padding = {5, 5, 1, 2}},
+                    CLAY({ .id = (tid), .layout = {.sizing = {GROW, FIX(58)}, .padding = {5, 5, 5, 5}, .childAlignment = {.y = CLAY_ALIGN_Y_BOTTOM}},
+                               .custom = {.customData = NC(K_THUMB, m->sky1, m->sky2, m->mtn, 0, b.hover, m->style)} }) {
+                        CLAY({.layout = {.sizing = {FIT, FIT}, .padding = {5, 5, 1, 2}},
                                       .backgroundColor = RGBA(0, 0, 0, 150), .cornerRadius = CLAY_CORNER_RADIUS(4)}) {
                             Tx(m->dur, 10, C_TEXT, 1);
                         }
@@ -557,12 +558,12 @@ static void MediaView(void) {
 }
 
 static void KnobGroup(int idx, const char *label, const char *val) {
-    CLAY(CLAY_IDI("KG", idx), {.layout = {COLM, .sizing = {FIT, FIT}, .childGap = 5, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
+    CLAY({ .id = (CLAY_IDI("KG", idx)), .layout = {COLM, .sizing = {FIT, FIT}, .childGap = 5, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}} }) {
         Clay_ElementId kid = CLAY_IDI("Knob", idx);
         Bs b = Interact(kid);
-        CLAY(kid, {.layout = {.sizing = {FIX(70), FIX(70)}}, .custom = {.customData = NC(K_KNOB, C_CARD, C_CARD, C_CARD, .5f, b.hover, 0)}}) {}
+        CLAY({ .id = (kid), .layout = {.sizing = {FIX(70), FIX(70)}}, .custom = {.customData = NC(K_KNOB, C_CARD, C_CARD, C_CARD, .5f, b.hover, 0)} }) {}
         Tx(label, 11, C_MUTED, 0);
-        CLAY_AUTO_ID({.layout = {.sizing = {FIX(64), FIX(24)}, .childAlignment = AL_C},
+        CLAY({.layout = {.sizing = {FIX(64), FIX(24)}, .childAlignment = AL_C},
                       .backgroundColor = RGB(28, 29, 34), .cornerRadius = CLAY_CORNER_RADIUS(6),
                       .border = {.color = RGB(40, 42, 48), .width = CLAY_BORDER_OUTSIDE(1)}}) {
             Tx(val, 12, C_TEXT, 0);
@@ -573,57 +574,57 @@ static void KnobGroup(int idx, const char *label, const char *val) {
 static void SwitchItem(int idx, const char *label) {
     Clay_ElementId id = CLAY_IDI("Switch", idx);
     Bs b = Interact(id);
-    CLAY(id, {.layout = {.sizing = {FIT, FIT}, .childGap = 8, .childAlignment = AL_Y}}) {
-        CLAY_AUTO_ID({.layout = {.sizing = {FIX(40), FIX(24)}},
+    CLAY({ .id = (id), .layout = {.sizing = {FIT, FIT}, .childGap = 8, .childAlignment = AL_Y} }) {
+        CLAY({.layout = {.sizing = {FIX(40), FIX(24)}},
                       .custom = {.customData = NC(K_SWITCH, C_CARD, C_CARD, C_CARD, 0, b.hover * 1.f - b.press * 1.5f, 0)}}) {}
         Tx(label, 11, C_MUTED, 0);
     }
 }
 
 static void AudioView(void) {
-    CLAY(CLAY_ID("AudioHead"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 0, 0}, .childGap = 8, .childAlignment = AL_Y}}) {
+    CLAY({ .id = (CLAY_ID("AudioHead")), .layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 0, 0}, .childGap = 8, .childAlignment = AL_Y} }) {
         Icon(I_NOTE, 18, C_DIM);
         Tx("Audio", 15, C_TEXT, 1);
     }
-    CLAY(CLAY_ID("AudioBody"), {.layout = {.sizing = {GROW, GROW}, .childGap = 6}}) {
-        CLAY(CLAY_ID("AudioScroll"), {.layout = {COLM, .sizing = {GROW, GROW}, .childGap = 10, .padding = {2, 0, 0, 8}},
-                                      .clip = {.vertical = true, .childOffset = Clay_GetScrollOffset()}}) {
-            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) { KnobGroup(0, "Volume", "100 %"); }
-            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .padding = {4, 4, 0, 0}}}) { KnobGroup(1, "Pan", "0"); HSPACE KnobGroup(2, "Bass", "0 dB"); }
-            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) { KnobGroup(3, "Treble", "0 dB"); }
-            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .padding = {6, 0, 8, 0}, .childGap = 18}}) { SwitchItem(0, "Fade In"); SwitchItem(1, "Fade Out"); }
-            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .padding = {2, 4, 0, 0}, .childAlignment = AL_Y}}) {
+    CLAY({ .id = (CLAY_ID("AudioBody")), .layout = {.sizing = {GROW, GROW}, .childGap = 6} }) {
+        CLAY({ .id = (CLAY_ID("AudioScroll")), .layout = {COLM, .sizing = {GROW, GROW}, .childGap = 10, .padding = {2, 0, 0, 8}},
+                                      .clip = {.vertical = true, .childOffset = Clay_GetScrollOffset()} }) {
+            CLAY({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) { KnobGroup(0, "Volume", "100 %"); }
+            CLAY({.layout = {.sizing = {GROW, FIT}, .padding = {4, 4, 0, 0}}}) { KnobGroup(1, "Pan", "0"); HSPACE KnobGroup(2, "Bass", "0 dB"); }
+            CLAY({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) { KnobGroup(3, "Treble", "0 dB"); }
+            CLAY({.layout = {.sizing = {GROW, FIT}, .padding = {6, 0, 8, 0}, .childGap = 18}}) { SwitchItem(0, "Fade In"); SwitchItem(1, "Fade Out"); }
+            CLAY({.layout = {.sizing = {GROW, FIT}, .padding = {2, 4, 0, 0}, .childAlignment = AL_Y}}) {
                 Tx("Fade In Duration", 11, C_TEXT, 0);
                 HSPACE
-                CLAY_AUTO_ID({.layout = {.sizing = {FIX(64), FIX(28)}, .padding = {0, 10, 0, 0}, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER}, .childGap = 4},
+                CLAY({.layout = {.sizing = {FIX(64), FIX(28)}, .padding = {0, 10, 0, 0}, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER}, .childGap = 4},
                               .backgroundColor = RGB(30, 31, 36), .cornerRadius = CLAY_CORNER_RADIUS(6)}) {
                     Tx("1", 12, C_TEXT, 0); Tx("s", 10, C_MUTED, 0);
                 }
             }
-            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIX(18)}, .padding = {2, 2, 0, 0}},
+            CLAY({.layout = {.sizing = {GROW, FIX(18)}, .padding = {2, 2, 0, 0}},
                           .custom = {.customData = NC(K_SLIDER, RGB(48, 50, 57), RGB(70, 73, 82), C_CARD, 0.05f, 0, 0)}}) {}
         }
-        CLAY(CLAY_ID("AudioScrollbar"), {.layout = {.sizing = {FIX(4), GROW}}, .custom = {.customData = NC(K_SCROLLBAR, C_CARD, C_CARD, C_CARD, 0, 0, 0)}}) {}
+        CLAY({ .id = (CLAY_ID("AudioScrollbar")), .layout = {.sizing = {FIX(4), GROW}}, .custom = {.customData = NC(K_SCROLLBAR, C_CARD, C_CARD, C_CARD, 0, 0, 0)} }) {}
     }
 }
 
 static void LeftPanel(void) {
-    CLAY(CLAY_ID("Library"), {.layout = {COLM, .sizing = {FIX(220), GROW}, .padding = {12, 12, 14, 12}, .childGap = 14}, PANEL}) {
-        CLAY(CLAY_ID("LibHead"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 0, 0}, .childGap = 8, .childAlignment = AL_Y}}) {
+    CLAY({ .id = (CLAY_ID("Library")), .layout = {COLM, .sizing = {FIX(220), GROW}, .padding = {12, 12, 14, 12}, .childGap = 14}, PANEL }) {
+        CLAY({ .id = (CLAY_ID("LibHead")), .layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 0, 0}, .childGap = 8, .childAlignment = AL_Y} }) {
             Icon(I_LIBRARY, 18, C_DIM);
             Tx("Library", 15, C_TEXT, 1);
             HSPACE
             Clay_ElementId imp = CLAY_ID("Import");
             Bs b = Interact(imp);
-            CLAY(imp, {.layout = {.sizing = {FIT, FIX(28)}, .padding = {10, 12, 0, 0}, .childGap = 5, .childAlignment = AL_Y},
-                       .backgroundColor = BtnBg(RGB(28, 29, 34), RGB(40, 42, 48), b), .cornerRadius = CLAY_CORNER_RADIUS(9)}) {
+            CLAY({ .id = (imp), .layout = {.sizing = {FIT, FIX(28)}, .padding = {10, 12, 0, 0}, .childGap = 5, .childAlignment = AL_Y},
+                       .backgroundColor = BtnBg(RGB(28, 29, 34), RGB(40, 42, 48), b), .cornerRadius = CLAY_CORNER_RADIUS(9) }) {
                 Icon(I_PLUS, 11, C_DIM);
                 Tx("Import", 12, C_TEXT, 0);
             }
         }
-        CLAY(CLAY_ID("LibTabs"), {.layout = {.sizing = {GROW, FIX(36)}, .padding = CLAY_PADDING_ALL(4), .childGap = 4},
+        CLAY({ .id = (CLAY_ID("LibTabs")), .layout = {.sizing = {GROW, FIX(36)}, .padding = CLAY_PADDING_ALL(4), .childGap = 4},
                                   .backgroundColor = C_SEG, .cornerRadius = CLAY_CORNER_RADIUS(12),
-                                  .border = {.color = RGB(30, 32, 37), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+                                  .border = {.color = RGB(30, 32, 37), .width = CLAY_BORDER_OUTSIDE(1)} }) {
             if (TabBtn(CLAY_IDI("LibTab", 0), "Media", gLeftTab == 0, 12, 9)) gLeftTab = 0;
             if (TabBtn(CLAY_IDI("LibTab", 1), "Audio", gLeftTab == 1, 12, 9)) gLeftTab = 1;
         }
@@ -641,26 +642,26 @@ static void CenterPanel(void) {
     float pw, ph;
     if (aw / ah > 16.f / 9.f) { ph = ah; pw = ah * 16.f / 9.f; } else { pw = aw; ph = aw * 9.f / 16.f; }
 
-    CLAY(CLAY_ID("Center"), {.layout = {COLM, .sizing = {GROW, GROW}}, PANEL}) {
-        CLAY(CLAY_ID("PreviewArea"), {.layout = {.sizing = {GROW, GROW}, .padding = CLAY_PADDING_ALL(14), .childAlignment = AL_C},
-                                      .clip = {.horizontal = true, .vertical = true}}) {
-            CLAY(CLAY_ID("PreviewFrame"), {.layout = {.sizing = {FIX(pw), FIX(ph)}},
-                                           .custom = {.customData = NC(K_PREVIEW, C_BG, C_BG, C_BG, 0, 0, 0)}}) {}
+    CLAY({ .id = (CLAY_ID("Center")), .layout = {COLM, .sizing = {GROW, GROW}}, PANEL }) {
+        CLAY({ .id = (CLAY_ID("PreviewArea")), .layout = {.sizing = {GROW, GROW}, .padding = CLAY_PADDING_ALL(14), .childAlignment = AL_C},
+                                      .clip = {.horizontal = true, .vertical = true} }) {
+            CLAY({ .id = (CLAY_ID("PreviewFrame")), .layout = {.sizing = {FIX(pw), FIX(ph)}},
+                                           .custom = {.customData = NC(K_PREVIEW, C_BG, C_BG, C_BG, 0, 0, 0)} }) {}
         }
-        CLAY(CLAY_ID("Transport"), {.layout = {.sizing = {GROW, FIX(56)}, .padding = {14, 14, 0, 4}, .childAlignment = AL_Y}}) {
-            CLAY(CLAY_ID("TimeL"), {.layout = {.sizing = {GROW, FIT}, .childGap = 7, .childAlignment = AL_Y}}) {
+        CLAY({ .id = (CLAY_ID("Transport")), .layout = {.sizing = {GROW, FIX(56)}, .padding = {14, 14, 0, 4}, .childAlignment = AL_Y} }) {
+            CLAY({ .id = (CLAY_ID("TimeL")), .layout = {.sizing = {GROW, FIT}, .childGap = 7, .childAlignment = AL_Y} }) {
                 Tx("00:00:00:00", 15, C_TEXT, 1);
                 Tx("/", 14, C_MUTED, 0);
                 Tx("00:00:09:00", 14, C_MUTED, 0);
             }
-            CLAY(CLAY_ID("TransC"), {.layout = {.sizing = {FIT, FIT}, .childGap = 12, .childAlignment = AL_Y}}) {
+            CLAY({ .id = (CLAY_ID("TransC")), .layout = {.sizing = {FIT, FIT}, .childGap = 12, .childAlignment = AL_Y} }) {
                 IconBtn(CLAY_ID("SkipB"), I_SKIP_B, 32, 16, C_DIM, false, 16);
                 IconBtn(CLAY_ID("PrevF"), I_CHEV_L, 28, 14, C_DIM, false, 14);
                 Clay_ElementId pid = CLAY_ID("Play");
                 Bs b = Interact(pid);
                 float sz = 44.f + 3.f * b.hover - 3.f * b.press;
-                CLAY(pid, {.layout = {.sizing = {FIX(50), FIX(50)}, .childAlignment = AL_C}}) {
-                    CLAY_AUTO_ID({.layout = {.sizing = {FIX(sz), FIX(sz)}, .childAlignment = AL_C},
+                CLAY({ .id = (pid), .layout = {.sizing = {FIX(50), FIX(50)}, .childAlignment = AL_C} }) {
+                    CLAY({.layout = {.sizing = {FIX(sz), FIX(sz)}, .childAlignment = AL_C},
                                   .backgroundColor = Dark(RGB(244, 244, 247), b.press * .12f), .cornerRadius = CLAY_CORNER_RADIUS(sz / 2)}) {
                         Icon(I_PLAY, 18, RGB(12, 12, 14));
                     }
@@ -668,8 +669,8 @@ static void CenterPanel(void) {
                 IconBtn(CLAY_ID("NextF"), I_CHEV_R, 28, 14, C_DIM, false, 14);
                 IconBtn(CLAY_ID("SkipF"), I_SKIP_F, 32, 16, C_DIM, false, 16);
             }
-            CLAY(CLAY_ID("TransR"), {.layout = {.sizing = {GROW, FIT}, .childGap = 10, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER}}}) {
-                CLAY_AUTO_ID({.layout = {.sizing = {FIT, FIX(22)}, .padding = {8, 8, 0, 0}, .childAlignment = AL_C},
+            CLAY({ .id = (CLAY_ID("TransR")), .layout = {.sizing = {GROW, FIT}, .childGap = 10, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER}} }) {
+                CLAY({.layout = {.sizing = {FIT, FIX(22)}, .padding = {8, 8, 0, 0}, .childAlignment = AL_C},
                               .backgroundColor = RGB(30, 31, 36), .cornerRadius = CLAY_CORNER_RADIUS(6)}) {
                     Tx("1920\xC3\x97" "1080 \xC2\xB7 30 fps", 10, C_MUTED, 0);
                 }
@@ -686,13 +687,13 @@ static void CenterPanel(void) {
 static void NumField(int n, const char *val, const char *unit) {
     Clay_ElementId id = CLAY_IDI("NumF", n);
     Bs b = Interact(id);
-    CLAY(id, {.layout = {.sizing = {GROW, FIX(36)}, .padding = {10, 6, 0, 0}, .childGap = 4, .childAlignment = AL_Y},
+    CLAY({ .id = (id), .layout = {.sizing = {GROW, FIX(36)}, .padding = {10, 6, 0, 0}, .childGap = 4, .childAlignment = AL_Y},
               .backgroundColor = Mix(C_FIELD, RGB(46, 47, 54), b.hover), .cornerRadius = CLAY_CORNER_RADIUS(10),
-              .border = {.color = Mix(RGB(44, 46, 52), RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+              .border = {.color = Mix(RGB(44, 46, 52), RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)} }) {
         HSPACE
         Tx(val, 14, C_TEXT, 0);
         Tx(unit, 11, C_MUTED, 0);
-        CLAY_AUTO_ID({.layout = {COLM, .sizing = {FIT, FIT}, .padding = {2, 0, 0, 0}}}) {
+        CLAY({.layout = {COLM, .sizing = {FIT, FIT}, .padding = {2, 0, 0, 0}}}) {
             Icon(I_CHEV_UP, 10, C_MUTED);
             Icon(I_CHEV_DN, 10, C_MUTED);
         }
@@ -700,22 +701,22 @@ static void NumField(int n, const char *val, const char *unit) {
 }
 
 static void FieldCard(int n, const char *title, int icon, const char *l1, const char *l2, const char *val, const char *unit, bool linked) {
-    CLAY(CLAY_IDI("FCard", n), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(10), .childGap = 7}, CARD}) {
-        CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 8, .childAlignment = AL_Y}}) {
+    CLAY({ .id = (CLAY_IDI("FCard", n)), .layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(10), .childGap = 7}, CARD }) {
+        CLAY({.layout = {.sizing = {GROW, FIT}, .childGap = 8, .childAlignment = AL_Y}}) {
             Icon(icon, 15, C_DIM);
             Tx(title, 13, C_TEXT, 1);
             HSPACE
             IconBtn(CLAY_IDI("Reset", n), I_RESET, 22, 12, C_MUTED, false, 6);
         }
-        CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 6, .childAlignment = AL_Y}}) {
-            CLAY_AUTO_ID({.layout = {.sizing = {FIX(18), FIT}}}) { Tx(l1, 13, C_MUTED, 0); }
+        CLAY({.layout = {.sizing = {GROW, FIT}, .childGap = 6, .childAlignment = AL_Y}}) {
+            CLAY({.layout = {.sizing = {FIX(18), FIT}}}) { Tx(l1, 13, C_MUTED, 0); }
             NumField(n * 2, val, unit);
         }
-        CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
+        CLAY({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
             IconBtn(CLAY_IDI("Link", n), I_LINK, 26, 16, linked ? C_ACCENT : C_MUTED, false, 8);
         }
-        CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 6, .childAlignment = AL_Y}}) {
-            CLAY_AUTO_ID({.layout = {.sizing = {FIX(18), FIT}}}) { Tx(l2, 13, C_MUTED, 0); }
+        CLAY({.layout = {.sizing = {GROW, FIT}, .childGap = 6, .childAlignment = AL_Y}}) {
+            CLAY({.layout = {.sizing = {FIX(18), FIT}}}) { Tx(l2, 13, C_MUTED, 0); }
             NumField(n * 2 + 1, val, unit);
         }
     }
@@ -724,9 +725,9 @@ static void FieldCard(int n, const char *title, int icon, const char *l1, const 
 static void NavButton(int n, int icon, const char *label) {
     Clay_ElementId id = CLAY_IDI("Nav", n);
     Bs b = Interact(id);
-    CLAY(id, {.layout = {.sizing = {GROW, FIX(48)}, .padding = {14, 12, 0, 0}, .childGap = 10, .childAlignment = AL_Y},
+    CLAY({ .id = (id), .layout = {.sizing = {GROW, FIX(48)}, .padding = {14, 12, 0, 0}, .childGap = 10, .childAlignment = AL_Y},
               .backgroundColor = BtnBg(C_CARD, RGB(38, 40, 46), b), .cornerRadius = CLAY_CORNER_RADIUS(14),
-              .border = {.color = Mix(C_CARDB, RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+              .border = {.color = Mix(C_CARDB, RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)} }) {
         Icon(icon, 18, C_DIM);
         Tx(label, 13, C_TEXT, 0);
         HSPACE
@@ -735,49 +736,49 @@ static void NavButton(int n, int icon, const char *label) {
 }
 
 static void TransformView(void) {
-    CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 10}}) {
+    CLAY({.layout = {.sizing = {GROW, FIT}, .childGap = 10}}) {
         FieldCard(0, "Position", I_POS, "X", "Y", "0", "px", false);
         FieldCard(1, "Scale", I_SCALE, "W", "H", "100", "%", true);
     }
-    CLAY(CLAY_ID("RotCard"), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(10), .childGap = 7}, CARD}) {
-        CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 10, .childAlignment = AL_Y}}) {
+    CLAY({ .id = (CLAY_ID("RotCard")), .layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(10), .childGap = 7}, CARD }) {
+        CLAY({.layout = {.sizing = {GROW, FIT}, .childGap = 10, .childAlignment = AL_Y}}) {
             Icon(I_ROT, 20, C_DIM);
             Tx("Rotation", 13, C_TEXT, 0);
             HSPACE
-            CLAY_AUTO_ID({.layout = {.sizing = {FIX(116), FIX(36)}}}) {
+            CLAY({.layout = {.sizing = {FIX(116), FIX(36)}}}) {
                 NumField(10, "0", "\xC2\xB0");
             }
         }
         Clay_ElementId rid = CLAY_ID("RotRuler");
         Bs b = Interact(rid);
-        CLAY(rid, {.layout = {.sizing = {GROW, FIX(84)}}, .custom = {.customData = NC(K_ROTRULER, C_CARD, C_CARD, C_CARD, 0, b.hover, 0)}}) {}
+        CLAY({ .id = (rid), .layout = {.sizing = {GROW, FIX(84)}}, .custom = {.customData = NC(K_ROTRULER, C_CARD, C_CARD, C_CARD, 0, b.hover, 0)} }) {}
     }
-    CLAY_AUTO_ID({.layout = {COLM, .sizing = {GROW, FIT}, .padding = {2, 2, 4, 0}, .childGap = 10}}) {
-        CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = AL_Y}}) {
+    CLAY({.layout = {COLM, .sizing = {GROW, FIT}, .padding = {2, 2, 4, 0}, .childGap = 10}}) {
+        CLAY({.layout = {.sizing = {GROW, FIT}, .childAlignment = AL_Y}}) {
             Tx("Opacity", 13, C_TEXT, 0);
             HSPACE
-            CLAY_AUTO_ID({.layout = {.sizing = {FIX(76), FIX(26)}, .padding = {0, 8, 0, 0}, .childGap = 4, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER}},
+            CLAY({.layout = {.sizing = {FIX(76), FIX(26)}, .padding = {0, 8, 0, 0}, .childGap = 4, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER}},
                           .backgroundColor = RGB(38, 39, 45), .cornerRadius = CLAY_CORNER_RADIUS(6)}) {
                 Tx("100", 12, C_TEXT, 0); Tx("%", 10, C_MUTED, 0);
             }
         }
         Clay_ElementId sid = CLAY_ID("OpacitySlider");
         Bs b = Interact(sid);
-        CLAY(sid, {.layout = {.sizing = {GROW, FIX(18)}},
-                   .custom = {.customData = NC(K_SLIDER, RGB(48, 50, 57), RGB(70, 73, 82), C_CARD, 1.f, b.hover * 1.5f, 0)}}) {}
+        CLAY({ .id = (sid), .layout = {.sizing = {GROW, FIX(18)}},
+                   .custom = {.customData = NC(K_SLIDER, RGB(48, 50, 57), RGB(70, 73, 82), C_CARD, 1.f, b.hover * 1.5f, 0)} }) {}
     }
     VSPACE
-    CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 10}}) {
+    CLAY({.layout = {.sizing = {GROW, FIT}, .childGap = 10}}) {
         NavButton(0, I_CROP, "Crop Tools");
         NavButton(1, I_DISTORT, "Distort");
     }
 }
 
 static void WheelItem(int i, const char *label) {
-    CLAY(CLAY_IDI("WheelCol", i), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 6, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
+    CLAY({ .id = (CLAY_IDI("WheelCol", i)), .layout = {COLM, .sizing = {GROW, FIT}, .childGap = 6, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}} }) {
         Clay_ElementId wid = CLAY_IDI("Wheel", i);
         Bs b = Interact(wid);
-        CLAY(wid, {.layout = {.sizing = {FIX(100), FIX(100)}}, .custom = {.customData = NC(K_WHEEL, C_CARD, C_CARD, C_CARD, 0, b.hover, 0)}}) {}
+        CLAY({ .id = (wid), .layout = {.sizing = {FIX(100), FIX(100)}}, .custom = {.customData = NC(K_WHEEL, C_CARD, C_CARD, C_CARD, 0, b.hover, 0)} }) {}
         Tx(label, 12, C_TEXT, 1);
         Tx("Neutral", 10, RGB(80, 140, 210), 0);
     }
@@ -787,13 +788,13 @@ static void AccHeader(int idx, const char *title, int icon, float openAnim) {
     Clay_ElementId id = CLAY_IDI("AccHdr", idx);
     Bs b = Interact(id);
     if (b.clicked) gAcc[idx] = !gAcc[idx];
-    CLAY(id, {.layout = {.sizing = {GROW, FIX(52)}, .padding = {16, 14, 0, 0}, .childGap = 12, .childAlignment = AL_Y},
+    CLAY({ .id = (id), .layout = {.sizing = {GROW, FIX(52)}, .padding = {16, 14, 0, 0}, .childGap = 12, .childAlignment = AL_Y},
               .backgroundColor = BtnBg(C_CARD, RGB(36, 37, 43), b), .cornerRadius = CLAY_CORNER_RADIUS(14),
-              .border = {.color = Mix(C_CARDB, RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+              .border = {.color = Mix(C_CARDB, RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)} }) {
         Icon(icon, 20, C_DIM);
         Tx(title, 14, C_TEXT, 0);
         HSPACE
-        CLAY_AUTO_ID({.layout = {.sizing = {FIX(24), FIX(24)}, .childAlignment = AL_C}, .cornerRadius = CLAY_CORNER_RADIUS(12),
+        CLAY({.layout = {.sizing = {FIX(24), FIX(24)}, .childAlignment = AL_C}, .cornerRadius = CLAY_CORNER_RADIUS(12),
                       .border = {.color = Mix(RGB(74, 77, 85), RGB(130, 134, 144), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
             IconV(I_PLUS, 12, C_DIM, 1.f - openAnim);
         }
@@ -812,31 +813,31 @@ static void Accordion(int idx, const char *title, int icon) {
     int n = 0;
     if (idx > 0) while (n < 4 && kSliderNames[idx][n]) n++;
     float cardH = (idx == 0) ? 184.f : SliderCardH(n);
-    CLAY(CLAY_IDI("AccCol", idx), {.layout = {COLM, .sizing = {GROW, FIT}}}) {
+    CLAY({ .id = (CLAY_IDI("AccCol", idx)), .layout = {COLM, .sizing = {GROW, FIT}} }) {
         AccHeader(idx, title, icon, o);
-        CLAY(CLAY_IDI("AccWrap", idx), {.layout = {COLM, .sizing = {GROW, FIX(o * (cardH + 10.f))}}, .clip = {.vertical = true}}) {
-            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIX(10)}}}) {}
-            CLAY(CLAY_IDI("AccBody", idx), {.layout = {COLM, .sizing = {GROW, FIX(cardH)}, .padding = CLAY_PADDING_ALL(12), .childGap = 12}, CARD}) {
+        CLAY({ .id = (CLAY_IDI("AccWrap", idx)), .layout = {COLM, .sizing = {GROW, FIX(o * (cardH + 10.f))}}, .clip = {.vertical = true} }) {
+            CLAY({.layout = {.sizing = {GROW, FIX(10)}}}) {}
+            CLAY({ .id = (CLAY_IDI("AccBody", idx)), .layout = {COLM, .sizing = {GROW, FIX(cardH)}, .padding = CLAY_PADDING_ALL(12), .childGap = 12}, CARD }) {
                 if (idx == 0) {
-                    CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT}}}) {
+                    CLAY({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT}}}) {
                         Clay_ElementId rid = CLAY_ID("ResetGrade");
                         Bs b = Interact(rid);
-                        CLAY(rid, {.layout = {.sizing = {FIT, FIT}, .childGap = 5, .childAlignment = AL_Y}}) {
+                        CLAY({ .id = (rid), .layout = {.sizing = {FIT, FIT}, .childGap = 5, .childAlignment = AL_Y} }) {
                             Icon(I_RESET, 12, Mix(RGB(120, 128, 160), C_TEXT, b.hover));
                             Tx("Reset", 11, Mix(RGB(120, 128, 160), C_TEXT, b.hover), 0);
                         }
                     }
-                    CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 10}}) {
+                    CLAY({.layout = {.sizing = {GROW, FIT}, .childGap = 10}}) {
                         WheelItem(0, "Shadows"); WheelItem(1, "Tint"); WheelItem(2, "Highlights");
                     }
                 } else {
                     for (int s = 0; s < n; s++) {
-                        CLAY(CLAY_IDI("SRow", idx * 8 + s), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 6}}) {
-                            CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}}}) { Tx(kSliderNames[idx][s], 11, C_DIM, 0); HSPACE Tx("0", 11, C_MUTED, 0); }
+                        CLAY({ .id = (CLAY_IDI("SRow", idx * 8 + s)), .layout = {COLM, .sizing = {GROW, FIT}, .childGap = 6} }) {
+                            CLAY({.layout = {.sizing = {GROW, FIT}}}) { Tx(kSliderNames[idx][s], 11, C_DIM, 0); HSPACE Tx("0", 11, C_MUTED, 0); }
                             Clay_ElementId sid = CLAY_IDI("Slid", idx * 8 + s);
                             Bs b = Interact(sid);
-                            CLAY(sid, {.layout = {.sizing = {GROW, FIX(16)}},
-                                       .custom = {.customData = NC(K_SLIDER, RGB(48, 50, 57), RGB(70, 73, 82), C_CARD, .5f, b.hover * 1.5f, 0)}}) {}
+                            CLAY({ .id = (sid), .layout = {.sizing = {GROW, FIX(16)}},
+                                       .custom = {.customData = NC(K_SLIDER, RGB(48, 50, 57), RGB(70, 73, 82), C_CARD, .5f, b.hover * 1.5f, 0)} }) {}
                         }
                     }
                 }
@@ -846,7 +847,7 @@ static void Accordion(int idx, const char *title, int icon) {
 }
 
 static void ColorsView(void) {
-    CLAY(CLAY_ID("AccList"), {.layout = {COLM, .sizing = {GROW, GROW}, .childGap = 10}}) {
+    CLAY({ .id = (CLAY_ID("AccList")), .layout = {COLM, .sizing = {GROW, GROW}, .childGap = 10} }) {
         Accordion(0, "Color Grading", I_GRADING);
         Accordion(1, "HSL", I_SLIDERS);
         Accordion(2, "Light", I_SUN);
@@ -859,13 +860,13 @@ static void RightPanel(void) {
     static const char *tabs[4] = {"Transform", "Colors", "Effects", "Text"};
     static const char *titles[4] = {"Transform", "Colors", "Effects", "Text"};
     static const int icons[4] = {I_CROP, I_PALETTE, I_SUN, I_TEXT};
-    CLAY(CLAY_ID("Right"), {.layout = {COLM, .sizing = {FIX(340), GROW}, .childGap = 10}}) {
-        CLAY(CLAY_ID("InspTabs"), {.layout = {.sizing = {GROW, FIX(48)}, .padding = CLAY_PADDING_ALL(5), .childGap = 4}, .backgroundColor = C_PANEL, .cornerRadius = CLAY_CORNER_RADIUS(16), .border = {.color = RGB(43,45,51), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+    CLAY({ .id = (CLAY_ID("Right")), .layout = {COLM, .sizing = {FIX(340), GROW}, .childGap = 10} }) {
+        CLAY({ .id = (CLAY_ID("InspTabs")), .layout = {.sizing = {GROW, FIX(48)}, .padding = CLAY_PADDING_ALL(5), .childGap = 4}, .backgroundColor = C_PANEL, .cornerRadius = CLAY_CORNER_RADIUS(16), .border = {.color = RGB(43,45,51), .width = CLAY_BORDER_OUTSIDE(1)} }) {
             for (int i = 0; i < 4; i++)
                 if (TabBtn(CLAY_IDI("InspTab", i), tabs[i], gRightTab == i, 12, 11)) gRightTab = i;
         }
-        CLAY(CLAY_ID("InspBody"), {.layout = {COLM, .sizing = {GROW, GROW}, .padding = CLAY_PADDING_ALL(12), .childGap = 10}, PANEL}) {
-            CLAY(CLAY_ID("InspTitle"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 2, 4}, .childGap = 12, .childAlignment = AL_Y}}) {
+        CLAY({ .id = (CLAY_ID("InspBody")), .layout = {COLM, .sizing = {GROW, GROW}, .padding = CLAY_PADDING_ALL(12), .childGap = 10}, PANEL }) {
+            CLAY({ .id = (CLAY_ID("InspTitle")), .layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 2, 4}, .childGap = 12, .childAlignment = AL_Y} }) {
                 Icon(icons[gRightTab], 22, C_DIM);
                 Tx(titles[gRightTab], 18, C_TEXT, 1);
             }
@@ -882,20 +883,20 @@ static void Timeline(void) {
     float bodyH = Clay_GetElementData(CLAY_ID("TimeBody")).boundingBox.height;
     float extra = fmaxf(0.f, bodyH - 26.f);
 
-    CLAY(CLAY_ID("Timeline"), {.layout = {COLM, .sizing = {GROW, FIX(260)}}, PANEL}) {
-        CLAY(CLAY_ID("TlBar"), {.layout = {.sizing = {GROW, FIX(48)}, .padding = {14, 12, 0, 0}, .childGap = 4, .childAlignment = AL_Y}}) {
+    CLAY({ .id = (CLAY_ID("Timeline")), .layout = {COLM, .sizing = {GROW, FIX(260)}}, PANEL }) {
+        CLAY({ .id = (CLAY_ID("TlBar")), .layout = {.sizing = {GROW, FIX(48)}, .padding = {14, 12, 0, 0}, .childGap = 4, .childAlignment = AL_Y} }) {
             IconBtn(CLAY_ID("ToolPtr"),  I_POINTER,  36, 18, C_TEXT, true, 9);
             IconBtn(CLAY_ID("ToolHand"), I_HAND,     36, 18, C_DIM, false, 9);
             IconBtn(CLAY_ID("ToolCut"),  I_SCISSORS, 36, 18, C_DIM, false, 9);
             IconBtn(CLAY_ID("ToolText"), I_TEXT,     36, 18, C_DIM, false, 9);
             GAPX(8)
-            CLAY_AUTO_ID({.layout = {.sizing = {FIX(1), FIX(20)}}, .backgroundColor = RGB(46, 48, 54)}) {}
+            CLAY({.layout = {.sizing = {FIX(1), FIX(20)}}, .backgroundColor = RGB(46, 48, 54)}) {}
             GAPX(8)
             IconBtn(CLAY_ID("ToolDel"),  I_TRASH,    36, 18, C_DIM, false, 9);
             HSPACE
-            CLAY(CLAY_ID("KfGroup"), {.layout = {.sizing = {FIT, FIX(32)}, .padding = {2, 2, 0, 0}, .childAlignment = AL_Y},
+            CLAY({ .id = (CLAY_ID("KfGroup")), .layout = {.sizing = {FIT, FIX(32)}, .padding = {2, 2, 0, 0}, .childAlignment = AL_Y},
                                       .backgroundColor = RGB(21, 22, 26), .cornerRadius = CLAY_CORNER_RADIUS(10),
-                                      .border = {.color = RGB(40, 42, 48), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+                                      .border = {.color = RGB(40, 42, 48), .width = CLAY_BORDER_OUTSIDE(1)} }) {
                 IconBtn(CLAY_ID("KfPrev"), I_KF_PREV, 28, 14, RGB(90, 93, 102), false, 8);
                 IconBtn(CLAY_ID("KfAdd"),  I_KF_DIAMOND, 28, 14, C_DIM, false, 8);
                 IconBtn(CLAY_ID("KfNext"), I_KF_NEXT, 28, 14, RGB(90, 93, 102), false, 8);
@@ -904,38 +905,38 @@ static void Timeline(void) {
             IconBtn(CLAY_ID("ZoomOut"), I_ZOOM_OUT, 28, 16, C_DIM, false, 8);
             Clay_ElementId zid = CLAY_ID("ZoomSlider");
             Bs zb = Interact(zid);
-            CLAY(zid, {.layout = {.sizing = {FIX(125), FIX(20)}}, .custom = {.customData = NC(K_SLIDER, RGB(48, 50, 57), RGB(48, 50, 57), C_CARD, .24f, zb.hover * 1.5f, 0)}}) {}
+            CLAY({ .id = (zid), .layout = {.sizing = {FIX(125), FIX(20)}}, .custom = {.customData = NC(K_SLIDER, RGB(48, 50, 57), RGB(48, 50, 57), C_CARD, .24f, zb.hover * 1.5f, 0)} }) {}
             IconBtn(CLAY_ID("ZoomIn"), I_ZOOM_IN, 28, 16, C_DIM, false, 8);
             GAPX(12)
             Clay_ElementId mid = CLAY_ID("Snap");
             Bs mb = Interact(mid);
-            CLAY(mid, {.layout = {.sizing = {FIX(36), FIX(36)}, .childAlignment = AL_C},
+            CLAY({ .id = (mid), .layout = {.sizing = {FIX(36), FIX(36)}, .childAlignment = AL_C},
                        .backgroundColor = BtnBg(RGB(30, 44, 88), RGB(38, 56, 112), mb), .cornerRadius = CLAY_CORNER_RADIUS(10),
-                       .border = {.color = RGB(48, 70, 140), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+                       .border = {.color = RGB(48, 70, 140), .width = CLAY_BORDER_OUTSIDE(1)} }) {
                 Icon(I_MAGNET, 18, RGB(96, 140, 255));
             }
         }
-        CLAY(CLAY_ID("TimeBody"), {.layout = {COLM, .sizing = {GROW, GROW}}}) {
-            CLAY(CLAY_ID("RulerRow"), {.layout = {.sizing = {GROW, FIX(26)}}}) {
+        CLAY({ .id = (CLAY_ID("TimeBody")), .layout = {COLM, .sizing = {GROW, GROW}} }) {
+            CLAY({ .id = (CLAY_ID("RulerRow")), .layout = {.sizing = {GROW, FIX(26)}} }) {
                 GAPX(60)
-                CLAY(CLAY_ID("Ruler"), {.layout = {.sizing = {GROW, GROW}}, .custom = {.customData = NC(K_RULER, C_CARD, C_CARD, C_CARD, 0, extra, 0)}}) {}
+                CLAY({ .id = (CLAY_ID("Ruler")), .layout = {.sizing = {GROW, GROW}}, .custom = {.customData = NC(K_RULER, C_CARD, C_CARD, C_CARD, 0, extra, 0)} }) {}
             }
-            CLAY(CLAY_ID("TrackV1"), {.layout = {.sizing = {GROW, FIX(44)}, .childAlignment = AL_Y}, .backgroundColor = C_ROW,
-                                      .border = {.color = RGB(32, 34, 39), .width = {.top = 1, .bottom = 1}}}) {
-                CLAY_AUTO_ID({.layout = {.sizing = {FIX(60), FIT}, .padding = {16, 0, 0, 0}, .childGap = 5, .childAlignment = AL_Y}}) {
+            CLAY({ .id = (CLAY_ID("TrackV1")), .layout = {.sizing = {GROW, FIX(44)}, .childAlignment = AL_Y}, .backgroundColor = C_ROW,
+                                      .border = {.color = RGB(32, 34, 39), .width = {.top = 1, .bottom = 1}} }) {
+                CLAY({.layout = {.sizing = {FIX(60), FIT}, .padding = {16, 0, 0, 0}, .childGap = 5, .childAlignment = AL_Y}}) {
                     Icon(I_FILM, 12, C_MUTED); Tx("V1", 11, C_MUTED, 0);
                 }
                 Clay_ElementId cid = CLAY_ID("Clip");
                 Bs cb = Interact(cid);
-                CLAY(cid, {.layout = {.sizing = {FIX(175), FIX(38)}, .padding = {10, 6, 5, 0}, .childGap = 5},
-                           .custom = {.customData = NC(K_CLIP, RGB(112, 52, 140), RGB(78, 36, 108), C_CARD, 0, cb.hover, 0)}}) {
+                CLAY({ .id = (cid), .layout = {.sizing = {FIX(175), FIX(38)}, .padding = {10, 6, 5, 0}, .childGap = 5},
+                           .custom = {.customData = NC(K_CLIP, RGB(112, 52, 140), RGB(78, 36, 108), C_CARD, 0, cb.hover, 0)} }) {
                     Icon(I_FILM, 11, C_TEXT);
                     Tx("City at dusk.mp4", 11, C_TEXT, 1);
                 }
             }
-            CLAY(CLAY_ID("TrackA1"), {.layout = {.sizing = {GROW, FIX(44)}, .childAlignment = AL_Y}, .backgroundColor = RGB(21, 22, 26),
-                                      .border = {.color = RGB(32, 34, 39), .width = {.bottom = 1}}}) {
-                CLAY_AUTO_ID({.layout = {.sizing = {FIX(60), FIT}, .padding = {16, 0, 0, 0}, .childGap = 5, .childAlignment = AL_Y}}) {
+            CLAY({ .id = (CLAY_ID("TrackA1")), .layout = {.sizing = {GROW, FIX(44)}, .childAlignment = AL_Y}, .backgroundColor = RGB(21, 22, 26),
+                                      .border = {.color = RGB(32, 34, 39), .width = {.bottom = 1}} }) {
+                CLAY({.layout = {.sizing = {FIX(60), FIT}, .padding = {16, 0, 0, 0}, .childGap = 5, .childAlignment = AL_Y}}) {
                     Icon(I_NOTE, 12, C_MUTED); Tx("A1", 11, C_MUTED, 0);
                 }
             }
@@ -948,9 +949,9 @@ static void Timeline(void) {
 /* ------------------------------------------------------------------ */
 static Clay_RenderCommandArray BuildUI(void) {
     Clay_BeginLayout();
-    CLAY(CLAY_ID("Root"), {.layout = {COLM, .sizing = {GROW, GROW}, .padding = {0, 8, 4, 4}, .childGap = 8}, .backgroundColor = C_BG}) {
+    CLAY({ .id = (CLAY_ID("Root")), .layout = {COLM, .sizing = {GROW, GROW}, .padding = {0, 8, 4, 4}, .childGap = 8}, .backgroundColor = C_BG }) {
         TopBar();
-        CLAY(CLAY_ID("Main"), {.layout = {.sizing = {GROW, GROW}, .childGap = 10}}) {
+        CLAY({ .id = (CLAY_ID("Main")), .layout = {.sizing = {GROW, GROW}, .childGap = 10} }) {
             LeftPanel();
             CenterPanel();
             RightPanel();
