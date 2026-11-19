@@ -25,6 +25,16 @@
 #define CLAY_IMPLEMENTATION
 #include "clay.h"
 #include "raylib.h"
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <windowsx.h>
+#ifdef RGB
+#undef RGB
+#endif
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Compatibility helpers: legacy CLAY(id, { config }) call style       */
@@ -99,7 +109,7 @@ static Clay_ElementDeclaration ClayCompatDeclaration(
 /* ------------------------------------------------------------------ */
 #define GROW        CLAY_SIZING_GROW(0)
 #define FIT         CLAY_SIZING_FIT(0)
-#define FIX(n)      CLAY_SIZING_FIXED(n)
+#define FIX(n)      CLAY_SIZING_FIXED(((n) >= 8 ? (n) + 2.25f : (n)))
 #define COLM        .layoutDirection = CLAY_TOP_TO_BOTTOM
 #define AL_C        {.x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER}
 #define AL_Y        {.y = CLAY_ALIGN_Y_CENTER}
@@ -121,6 +131,7 @@ enum {
     I_GRADING, I_SLIDERS, I_SUN, I_DROP, I_MOUNTAIN, I_DISTORT, I_SKIP_B, I_SKIP_F, I_PLAY,
     I_LOOP, I_GRID, I_POINTER, I_HAND, I_SCISSORS, I_TEXT, I_TRASH, I_KF_PREV, I_KF_NEXT,
     I_KF_DIAMOND, I_ZOOM_OUT, I_ZOOM_IN, I_MAGNET, I_FILM, I_BOWTIE, I_SPARKLE,
+    I_MINIMIZE, I_MAXIMIZE, I_CLOSE,
     K_THUMB = 100, K_KNOB, K_WHEEL, K_SWITCH, K_SLIDER, K_ROTRULER, K_RULER, K_PREVIEW,
     K_CLIP, K_SCROLLBAR, K_PILL, K_FILTER, K_CHIP, K_GLOW
 };
@@ -142,6 +153,11 @@ static float gFK[2] = {1.f, 1.f};   /* per-font size multiplier (normalises em s
 static float gDt;
 static bool  gHand, gCross;
 static int   gLeftTab = 0, gRightTab = 0;
+static int   gWindowAction; /* 0 none, 1 minimize, 2 maximize/restore, 3 close */
+static bool  gWantQuit;
+#ifdef _WIN32
+static WNDPROC gPreviousWndProc;
+#endif
 
 /* right panel state */
 static int   gOpenAcc = 0;                            /* single-open accordion, -1 none */
@@ -263,10 +279,10 @@ static Clay_Color BtnBg(Clay_Color base, Clay_Color hov, Bs b) { return Mix(Mix(
 static Clay_String S(const char *s) { return (Clay_String){.isStaticallyAllocated = false, .length = (int32_t)strlen(s), .chars = s}; }
 
 static void Tx(const char *s, float size, Clay_Color c, int font) {
-    CLAY_TEXT(S(s), CLAY_TEXT_CONFIG({.fontId = font, .fontSize = size, .textColor = c, .wrapMode = CLAY_TEXT_WRAP_NONE}));
+    CLAY_TEXT(S(s), CLAY_TEXT_CONFIG({.fontId = font, .fontSize = size + 2.25f, .textColor = c, .wrapMode = CLAY_TEXT_WRAP_NONE}));
 }
 static void TxWrap(const char *s, float size, Clay_Color c, int font) {
-    CLAY_TEXT(S(s), CLAY_TEXT_CONFIG({.fontId = font, .fontSize = size, .textColor = c, .wrapMode = CLAY_TEXT_WRAP_WORDS}));
+    CLAY_TEXT(S(s), CLAY_TEXT_CONFIG({.fontId = font, .fontSize = size + 2.25f, .textColor = c, .wrapMode = CLAY_TEXT_WRAP_WORDS}));
 }
 static void IconV(int k, float sz, Clay_Color c, float v) {
     CLAY_AUTO_ID({.layout = {.sizing = {.width = FIX(sz), .height = FIX(sz)}},
@@ -283,6 +299,21 @@ static bool IconBtn(Clay_ElementId id, int icon, float box, float isz, Clay_Colo
         Icon(icon, isz, ic);
     }
     return b.clicked;
+}
+
+static void WindowButton(const char *key, int icon) {
+    Clay_ElementId id = CLAY_ID(key);
+    Bs b = Interact(id);
+    Clay_Color bg = icon == I_CLOSE
+        ? Mix(RGBA(0, 0, 0, 0), RGB(190, 48, 56), b.hover)
+        : RGBA(255, 255, 255, 18.f * b.hover);
+    CLAY(id, {.layout = {.sizing = {FIX(36), FIX(32)}, .childAlignment = AL_C},
+              .backgroundColor = bg, .cornerRadius = CLAY_CORNER_RADIUS(5)}) {
+        Icon(icon, 13, C_TEXT);
+    }
+    if (b.clicked) {
+        gWindowAction = icon == I_MINIMIZE ? 1 : icon == I_MAXIMIZE ? 2 : 3;
+    }
 }
 
 static bool TabBtn(Clay_ElementId id, const char *label, bool sel, float size, float rad, bool pill) {
@@ -385,9 +416,9 @@ static void Tri(Vector2 a, Vector2 b, Vector2 c, Color col) {
     DrawTriangle(a, b, c, col);
 }
 static void TxtAt(int font, const char *s, float x, float y, float size, Color c) {
-    DrawTextEx(gFonts[font], s, (Vector2){roundf(x), roundf(y)}, size * gFK[font], 0, c);
+    DrawTextEx(gFonts[font], s, (Vector2){roundf(x), roundf(y)}, (size + 2.25f) * gFK[font], 0, c);
 }
-static float TxtW(int font, const char *s, float size) { return MeasureTextEx(gFonts[font], s, size * gFK[font], 0).x; }
+static float TxtW(int font, const char *s, float size) { return MeasureTextEx(gFonts[font], s, (size + 2.25f) * gFK[font], 0).x; }
 
 /* ------------------------------------------------------------------ */
 /* icons                                                               */
@@ -463,6 +494,9 @@ static void DrawIcon(int k, Rectangle r, Color c, float v) {
                     LN(.9, .22, .9, .78); LN(.9, .22, .5, .5); LN(.9, .78, .5, .5); break;
     case I_SPARKLE: LN(.5, .08, .58, .42); LN(.58, .42, .92, .5); LN(.92, .5, .58, .58); LN(.58, .58, .5, .92);
                     LN(.5, .92, .42, .58); LN(.42, .58, .08, .5); LN(.08, .5, .42, .42); LN(.42, .42, .5, .08); break;
+    case I_MINIMIZE: LN(.18, .5, .82, .5); break;
+    case I_MAXIMIZE: StrokeRR((Rectangle){x + .2f * w, y + .2f * h, .6f * w, .6f * h}, 1.5f, t, c); break;
+    case I_CLOSE: LN(.22, .22, .78, .78); LN(.78, .22, .22, .78); break;
     default: break;
     }
 #undef P
@@ -779,6 +813,10 @@ static void TopBar(void) {
         IconBtn(CLAY_ID("Undo"), I_UNDO, 28, 15, C_DIM, false, 8);
         GAPX(8)
         IconBtn(CLAY_ID("Redo"), I_REDO, 28, 15, RGB(76, 79, 88), false, 8);
+        HSPACE
+        WindowButton("WindowMinimize", I_MINIMIZE);
+        WindowButton("WindowMaximize", I_MAXIMIZE);
+        WindowButton("WindowClose", I_CLOSE);
     }
 }
 
@@ -1660,7 +1698,7 @@ static Font TryFont(const char **paths, int n, int slot) {
     cps[k++] = 0xB0; cps[k++] = 0xD7; cps[k++] = 0xB7; cps[k++] = 0x2026;
     for (int i = 0; i < n; i++) {
         if (FileExists(paths[i])) {
-            Font f = LoadFontEx(paths[i], 48, cps, k);
+            Font f = LoadFontEx(paths[i], 96, cps, k);
             if (f.texture.id > 0) {
                 SetTextureFilter(f.texture, TEXTURE_FILTER_BILINEAR);
                 /* every size in this file was tuned on Segoe UI (ratio 0.752); keep the same em for any other font */
@@ -1674,10 +1712,54 @@ static Font TryFont(const char **paths, int n, int slot) {
     return GetFontDefault();
 }
 
+#ifdef _WIN32
+static LRESULT CALLBACK PlutoWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == WM_NCHITTEST && gPreviousWndProc) {
+        LRESULT base = CallWindowProc(gPreviousWndProc, hwnd, msg, wParam, lParam);
+        if (base != HTCLIENT) return base;
+
+        POINT p = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        ScreenToClient(hwnd, &p);
+        RECT r; GetClientRect(hwnd, &r);
+
+        if (!IsZoomed(hwnd)) {
+            const int edge = 7;
+            bool left = p.x < edge, right = p.x >= r.right - edge;
+            bool top = p.y < edge, bottom = p.y >= r.bottom - edge;
+            if (top && left) return HTTOPLEFT;
+            if (top && right) return HTTOPRIGHT;
+            if (bottom && left) return HTBOTTOMLEFT;
+            if (bottom && right) return HTBOTTOMRIGHT;
+            if (left) return HTLEFT;
+            if (right) return HTRIGHT;
+            if (top) return HTTOP;
+            if (bottom) return HTBOTTOM;
+        }
+
+        /* The empty middle of the custom top bar behaves like a normal title bar. */
+        if (p.y >= 7 && p.y < 50 && p.x >= 450 && p.x < r.right - 132) return HTCAPTION;
+        return HTCLIENT;
+    }
+    return gPreviousWndProc ? CallWindowProc(gPreviousWndProc, hwnd, msg, wParam, lParam)
+                            : DefWindowProc(hwnd, msg, wParam, lParam);
+}
+#endif
+
 int main(void) {
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
-    InitWindow(1600, 967, "Pluto");   /* 967 px tall => the Transform tab fits with no scrolling */
+#ifdef _WIN32
+    /* Prevent Windows bitmap-scaling the UI on scaled displays. */
+    SetProcessDPIAware();
+#endif
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_UNDECORATED | FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
+    InitWindow(1600, 967, "Pluto");   /* borderless custom title bar; 967 px tall => Transform fits */
     SetWindowMinSize(1180, 720);
+#ifdef _WIN32
+    HWND hwnd = (HWND)GetWindowHandle();
+    if (hwnd) {
+        gPreviousWndProc = (WNDPROC)(LONG_PTR)GetWindowLongPtr(hwnd, GWLP_WNDPROC);
+        if (gPreviousWndProc) SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR)PlutoWindowProc);
+    }
+#endif
 
     const char *reg[] = {"resources/Inter-Regular.ttf", "Inter-Regular.ttf", "C:/Windows/Fonts/segoeui.ttf",
                          "/System/Library/Fonts/Supplemental/Arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -1696,7 +1778,7 @@ int main(void) {
     Clay_Initialize(arena, (Clay_Dimensions){(float)GetScreenWidth(), (float)GetScreenHeight()}, (Clay_ErrorHandler){OnClayError, 0});
     Clay_SetMeasureTextFunction(MeasureTxt, NULL);
 
-    while (!WindowShouldClose()) {
+    while (!WindowShouldClose() && !gWantQuit) {
         gDt = GetFrameTime(); if (gDt > 0.05f) gDt = 0.05f;
         Clay_SetLayoutDimensions((Clay_Dimensions){(float)GetScreenWidth(), (float)GetScreenHeight()});
         Vector2 m = GetMousePosition();
@@ -1706,6 +1788,15 @@ int main(void) {
         if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) { gDragId = 0; gDragWheel = -1; }
         gCustN = 0; gHand = false; gCross = false;
         Clay_RenderCommandArray cmds = BuildUI();
+
+        if (gWindowAction == 1) MinimizeWindow();
+        else if (gWindowAction == 2) {
+            if (IsWindowState(FLAG_WINDOW_MAXIMIZED)) RestoreWindow();
+            else MaximizeWindow();
+        }
+        else if (gWindowAction == 3) gWantQuit = true;
+        gWindowAction = 0;
+        if (gWantQuit) break;
 
         BeginDrawing();
         ClearBackground((Color){14, 15, 17, 255});
