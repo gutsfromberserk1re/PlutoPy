@@ -138,7 +138,7 @@ enum {
     I_KF_DIAMOND, I_ZOOM_OUT, I_ZOOM_IN, I_MAGNET, I_FILM, I_BOWTIE, I_SPARKLE,
     I_MINIMIZE, I_MAXIMIZE, I_CLOSE,
     K_THUMB = 100, K_KNOB, K_WHEEL, K_SWITCH, K_SLIDER, K_ROTRULER, K_RULER, K_PREVIEW,
-    K_CLIP, K_SCROLLBAR, K_PILL, K_FILTER, K_CHIP, K_GLOW
+    K_CLIP, K_SCROLLBAR, K_PILL, K_FILTER, K_CHIP, K_GLOW, K_SPLIT
 };
 
 typedef struct { int kind; Clay_Color a, b, c; float v, f; int i; } Cust;
@@ -178,6 +178,24 @@ static bool  gSB; static Rectangle gSBR;              /* inspector scrollbar thu
 /* left panel state */
 static float gAudS, gAudT;                            /* audio panel scroll */
 static bool  gSwOn[2];                                /* fade in / fade out */
+static float gKnob[4] = {.5f, .5f, .5f, .5f};        /* volume, pan, bass, treble (0..1, .5 = default) */
+static float gKnobStartV, gKnobStartY;
+static float gLTabT = 1.f, gLTabE = 1.f;             /* left tab-switch transition */
+static Rectangle gLFadeR; static float gLFadeA;      /* fade overlay while switching Media/Audio */
+
+/* resizable panels (defaults already include the FIX() +2.25 so the look is unchanged) */
+#define LEFT_MIN   250.f
+#define LEFT_MAX   440.f
+#define RIGHT_MIN  376.25f   /* inspector cards are laid out for this width, so it can only grow */
+#define RIGHT_MAX  520.f
+#define TL_MIN     200.f
+#define TL_MAX     560.f
+#define CENTER_MIN 400.f     /* preview never gets narrower than this */
+#define MAIN_MIN   300.f     /* panels row never gets shorter than this */
+static float gLeftW = 288.25f, gRightW = 376.25f, gTimeH = 286.25f;
+static int   gSplit;                                  /* 0 none, 1 left, 2 right, 3 timeline */
+static float gSplitM, gSplitV;                        /* mouse + size when the drag started */
+static int   gResize;                                 /* cursor: 0 normal, 1 horizontal, 2 vertical */
 
 /* values */
 static float gNum[4] = {0, 0, 100, 100};              /* X, Y, W, H */
@@ -601,7 +619,7 @@ static void DrawCustom(Cust *cu, Rectangle r) {
             Tri((Vector2){r.x + .06f * r.width, r.y + r.height}, (Vector2){r.x + .30f * r.width, r.y + .40f * r.height}, (Vector2){r.x + .62f * r.width, r.y + r.height}, m);
             Tri((Vector2){r.x + .36f * r.width, r.y + r.height}, (Vector2){r.x + .64f * r.width, r.y + .48f * r.height}, (Vector2){r.x + .94f * r.width, r.y + r.height}, LerpC(m, WHITE, .10f));
             const char *lab = kMedia[idx].label;
-            if (lab) TxtAt(1, lab, r.x + 7, r.y + r.height - 33, 5, (Color){240, 240, 244, 235});
+            if (lab) TxtAt(1, lab, r.x + 7, r.y + r.height - 36, 6, (Color){240, 240, 244, 235});
         }
         FillRR(r, 10, (Color){255, 255, 255, U8(20 * cu->f)});
         StrokeRR(r, 10, 1, (Color){255, 255, 255, U8(20 + 60 * cu->f)});
@@ -741,10 +759,10 @@ static void DrawCustom(Cust *cu, Rectangle r) {
     } break;
 
     case K_PILL: {
-        /* segmented control: dark track + sliding selection pill; v = fractional tab index.
-           (Clay does not emit the background rectangle of custom elements, so the track is drawn here.) */
+        int n = cu->i > 0 ? cu->i : 4;
         FillRR(r, 14, (Color){12, 13, 15, 255});
-        float tw = (r.width - 8.f - 12.f) / 4.f;
+        if (n == 2) StrokeRR(r, 14, 1, (Color){30, 32, 37, 255});
+        float tw = (r.width - 8.f - 4.f * (n - 1)) / (float)n;
         Rectangle p = {r.x + 4.f + cu->v * (tw + 4.f), r.y + 4.f, tw, r.height - 8.f};
         FillRR(p, 11, (Color){42, 43, 49, 255});
         StrokeRR(p, 11, 1, (Color){55, 56, 62, 255});
@@ -770,6 +788,14 @@ static void DrawCustom(Cust *cu, Rectangle r) {
         } else {
             DrawCircleV(c, rad, RC(cu->a));
         }
+    } break;
+
+    case K_SPLIT: {
+        /* v = activity 0..1 (hover/drag), i = 1 for a vertical bar (resizes width) */
+        if (cu->v < .01f) break;
+        Color ac = (Color){64, 120, 255, U8(230 * cu->v)};
+        if (cu->i) FillRR((Rectangle){r.x + r.width / 2 - 1.f, r.y, 2.f, r.height}, 1.f, ac);
+        else       FillRR((Rectangle){r.x, r.y + r.height / 2 - 1.f, r.width, 2.f}, 1.f, ac);
     } break;
 
     case K_GLOW: {
@@ -866,6 +892,8 @@ static void RenderUI(Clay_RenderCommandArray cmds) {
     }
     if (gFadeA > 2.f && gFadeR.width > 0.f)
         GradRR(gFadeR, 22, (Color){28, 29, 32, U8(gFadeA)}, (Color){21, 22, 24, U8(gFadeA)});
+    if (gLFadeA > 2.f && gLFadeR.width > 0.f)
+        FillRR(gLFadeR, 0, (Color){23, 24, 28, U8(gLFadeA)});   /* = C_PANEL */
     if (gSB) FillRR(gSBR, 2, (Color){92, 95, 104, 255});
 }
 
@@ -878,6 +906,53 @@ static Clay_Dimensions MeasureTxt(Clay_StringSlice t, Clay_TextElementConfig *cf
     return (Clay_Dimensions){v.x, v.y};
 }
 static void OnClayError(Clay_ErrorData e) { printf("Clay error: %.*s\n", e.errorText.length, e.errorText.chars); }
+
+/* ------------------------------------------------------------------ */
+/* resizable panels                                                    */
+/* ------------------------------------------------------------------ */
+static const char *kSplitKey[3] = {"SplitL", "SplitR", "SplitB"};
+
+static float Clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+static void ClampPanels(void) {
+    float W = (float)GetScreenWidth(), H = (float)GetScreenHeight();
+    /* root padding 16 + two 10px splitters = 36 */
+    gRightW = Clampf(gRightW, RIGHT_MIN, fmaxf(RIGHT_MIN, fminf(RIGHT_MAX, W - 36.f - LEFT_MIN - CENTER_MIN)));
+    gLeftW  = Clampf(gLeftW,  LEFT_MIN,  fmaxf(LEFT_MIN,  fminf(LEFT_MAX,  W - 36.f - gRightW - CENTER_MIN)));
+    /* top bar 48 + 10 gap + 10 splitter + 12 bottom pad (+2 slack) */
+    gTimeH  = Clampf(gTimeH,  TL_MIN,    fmaxf(TL_MIN,    fminf(TL_MAX,    H - 82.f - MAIN_MIN)));
+}
+
+/* runs before layout so the new size applies in the same frame */
+static void UpdateSplits(void) {
+    Vector2 m = GetMousePosition();
+    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) gSplit = 0;
+    else if (gSplit == 0 && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        for (int i = 0; i < 3; i++) {
+            if (Clay_PointerOver(CLAY_SIDI(S(kSplitKey[i]), 0))) {
+                gSplit = i + 1;
+                gSplitM = i == 2 ? m.y : m.x;
+                gSplitV = i == 0 ? gLeftW : i == 1 ? gRightW : gTimeH;
+            }
+        }
+    }
+    if (gSplit == 1) gLeftW  = gSplitV + (m.x - gSplitM);
+    if (gSplit == 2) gRightW = gSplitV - (m.x - gSplitM);
+    if (gSplit == 3) gTimeH  = gSplitV - (m.y - gSplitM);
+    ClampPanels();
+}
+
+/* which: 0 left|center, 1 center|right, 2 main/timeline */
+static void Splitter(int which) {
+    Clay_ElementId id = CLAY_SIDI(S(kSplitKey[which]), 0);
+    bool vert = which < 2;
+    bool over = Clay_PointerOver(id);
+    bool act  = gSplit == which + 1;
+    if (act || (over && !gSplit)) gResize = vert ? 1 : 2;
+    float v = Anim(id.id, act ? 1.f : (over && !gSplit) ? .55f : 0.f, 22.f);
+    CLAY(id, {.layout = {.sizing = {vert ? CLAY_SIZING_FIXED(10) : GROW, vert ? GROW : CLAY_SIZING_FIXED(10)}},
+              .custom = {.customData = NC(K_SPLIT, C_ACCENT, C_ACCENT, C_ACCENT, v, 0, vert)}}) {}
+}
 
 /* ------------------------------------------------------------------ */
 /* UI: top bar                                                         */
@@ -918,30 +993,30 @@ static void ValBox(const char *s, const char *unit, float w, float h, float fs, 
 static void SliderLogic(Clay_ElementId id, int gi, float kr);
 
 static void MediaView(void) {
-    CLAY(CLAY_ID("MediaCol"), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 9}}) {
+    CLAY(CLAY_ID("MediaCol"), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 10}}) {
         Clay_ElementId sid = CLAY_ID("Search");
         Bs sb = Interact(sid);
-        CLAY(sid, {.layout = {.sizing = {GROW, FIX(34)}, .padding = {13, 12, 0, 0}, .childGap = 9, .childAlignment = AL_Y},
-                   .backgroundColor = Mix(RGB(30, 31, 36), RGB(36, 37, 43), sb.hover), .cornerRadius = CLAY_CORNER_RADIUS(11)}) {
-            Icon(I_SEARCH, 15, C_MUTED);
-            Tx("Search media", 12, C_MUTED, 0);
+        CLAY(sid, {.layout = {.sizing = {GROW, FIX(38)}, .padding = {14, 12, 0, 0}, .childGap = 10, .childAlignment = AL_Y},
+                   .backgroundColor = Mix(RGB(30, 31, 36), RGB(36, 37, 43), sb.hover), .cornerRadius = CLAY_CORNER_RADIUS(12)}) {
+            Icon(I_SEARCH, 17, Mix(C_MUTED, C_TEXT, sb.hover * .6f));
+            Tx("Search media", 14, C_MUTED, 0);
         }
         for (int row = 0; row < 3; row++) {
-            CLAY(CLAY_IDI("MRow", row), {.layout = {.sizing = {GROW, FIT}, .childGap = 9}}) {
+            CLAY(CLAY_IDI("MRow", row), {.layout = {.sizing = {GROW, FIT}, .childGap = 10}}) {
                 for (int col = 0; col < 2; col++) {
                     int i = row * 2 + col;
                     const MediaItem *m = &kMedia[i];
-                    CLAY(CLAY_IDI("Media", i), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 6}}) {
+                    CLAY(CLAY_IDI("Media", i), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 7}}) {
                         Clay_ElementId tid = CLAY_IDI("Thumb", i);
                         Bs b = Interact(tid);
-                        CLAY(tid, {.layout = {.sizing = {GROW, FIX(77)}, .padding = {6, 6, 6, 6}, .childAlignment = {.y = CLAY_ALIGN_Y_BOTTOM}},
+                        CLAY(tid, {.layout = {.sizing = {GROW, FIX(84)}, .padding = {7, 7, 7, 7}, .childAlignment = {.y = CLAY_ALIGN_Y_BOTTOM}},
                                    .custom = {.customData = NC(K_THUMB, m->sky1, m->sky2, m->mtn, 0, b.hover, m->style | (i << 4))}}) {
-                            CLAY_AUTO_ID({.layout = {.sizing = {FIT, FIT}, .padding = {5, 5, 1, 2}},
-                                          .backgroundColor = RGBA(0, 0, 0, 150), .cornerRadius = CLAY_CORNER_RADIUS(5)}) {
-                                Tx(m->dur, 9, C_TEXT, 1);
+                            CLAY_AUTO_ID({.layout = {.sizing = {FIT, FIT}, .padding = {6, 6, 2, 3}},
+                                          .backgroundColor = RGBA(0, 0, 0, 150), .cornerRadius = CLAY_CORNER_RADIUS(6)}) {
+                                Tx(m->dur, 11, C_TEXT, 1);
                             }
                         }
-                        Tx(m->name, 9, C_MUTED, 0);
+                        Tx(m->name, 11, Mix(C_MUTED, C_DIM, b.hover), 0);
                     }
                 }
             }
@@ -949,16 +1024,39 @@ static void MediaView(void) {
     }
 }
 
-static void KnobGroup(int idx, const char *label, const char *val) {
-    CLAY(CLAY_IDI("KG", idx), {.layout = {COLM, .sizing = {FIT, FIT}, .childGap = 5, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
+/* value text for knob idx */
+static const char *KnobVal(int idx) {
+    float v = gKnob[idx];
+    if (idx == 0) return Fmt("%d %%", (int)roundf(v * 200.f));
+    if (idx == 1) return Fmt("%d", (int)roundf((v - .5f) * 200.f));
+    return Fmt("%d dB", (int)roundf((v - .5f) * 24.f));
+}
+
+/* draggable knob: drag up/down to change, snaps to the centre detent */
+static void KnobGroup(int idx, const char *label) {
+    CLAY(CLAY_IDI("KG", idx), {.layout = {COLM, .sizing = {FIT, FIT}, .childGap = 6, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
         Clay_ElementId kid = CLAY_IDI("Knob", idx);
         Bs b = Interact(kid);
-        CLAY(kid, {.layout = {.sizing = {FIX(69), FIX(69)}}, .custom = {.customData = NC(K_KNOB, C_CARD, C_CARD, C_CARD, .5f, b.hover, 0)}}) {}
-        Tx(label, 9, C_MUTED, 0);
-        CLAY_AUTO_ID({.layout = {.sizing = {FIX(62), FIX(23)}, .childAlignment = AL_C},
-                      .backgroundColor = RGB(28, 29, 34), .cornerRadius = CLAY_CORNER_RADIUS(7),
-                      .border = {.color = RGB(40, 42, 48), .width = CLAY_BORDER_OUTSIDE(1)}}) {
-            Tx(val, 10, C_TEXT, 0);
+        if (Clay_PointerOver(kid) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            gDragId = kid.id; gKnobStartV = gKnob[idx]; gKnobStartY = GetMousePosition().y;
+        }
+        bool drag = false;
+        if (gDragId == kid.id) {
+            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                float v = gKnobStartV + (gKnobStartY - GetMousePosition().y) / 160.f;
+                v = v < 0.f ? 0.f : v > 1.f ? 1.f : v;
+                if (fabsf(v - .5f) < .015f) v = .5f;
+                gKnob[idx] = v; drag = true;
+            } else gDragId = 0;
+        }
+        float act = Anim(kid.id + 9u, drag ? 1.f : b.hover * .6f, 20.f);
+        float shown = Anim(kid.id + 13u, gKnob[idx], 30.f);      /* smooth pointer motion */
+        CLAY(kid, {.layout = {.sizing = {FIX(72), FIX(72)}}, .custom = {.customData = NC(K_KNOB, C_CARD, C_CARD, C_CARD, shown, act, 0)}}) {}
+        Tx(label, 11, C_MUTED, 0);
+        CLAY_AUTO_ID({.layout = {.sizing = {FIX(68), FIX(26)}, .childAlignment = AL_C},
+                      .backgroundColor = RGB(28, 29, 34), .cornerRadius = CLAY_CORNER_RADIUS(8),
+                      .border = {.color = Mix(RGB(40, 42, 48), RGB(64, 67, 75), act), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+            Tx(KnobVal(idx), 12, C_TEXT, 0);
         }
     }
 }
@@ -968,24 +1066,24 @@ static void SwitchItem(int idx, const char *label) {
     Bs b = Interact(id);
     if (b.clicked) gSwOn[idx] = !gSwOn[idx];
     float on = Anim(id.id + 5u, gSwOn[idx] ? 1.f : 0.f, 22.f);
-    CLAY(id, {.layout = {.sizing = {FIT, FIT}, .childGap = 8, .childAlignment = AL_Y}}) {
-        CLAY_AUTO_ID({.layout = {.sizing = {FIX(38), FIX(22)}},
+    CLAY(id, {.layout = {.sizing = {FIT, FIT}, .childGap = 9, .childAlignment = AL_Y}}) {
+        CLAY_AUTO_ID({.layout = {.sizing = {FIX(42), FIX(24)}},
                       .custom = {.customData = NC(K_SWITCH, C_CARD, C_CARD, C_CARD, on, b.hover * 1.f - b.press * 1.5f, 0)}}) {}
-        Tx(label, 10, C_MUTED, 0);
+        Tx(label, 12, Mix(C_MUTED, C_DIM, b.hover), 0);
     }
 }
 
 static void DurRow(int gi, const char *label) {
-    CLAY_AUTO_ID({.layout = {COLM, .sizing = {GROW, FIT}, .padding = {3, 0, 0, 0}, .childGap = 4}}) {
+    CLAY_AUTO_ID({.layout = {COLM, .sizing = {GROW, FIT}, .padding = {3, 0, 0, 0}, .childGap = 5}}) {
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = AL_Y}}) {
-            Tx(label, 10, C_DIM, 0);
+            Tx(label, 12, C_DIM, 0);
             HSPACE
-            ValBox(Fmt("%d", 1 + (int)roundf(gSl[gi] * 9.f)), "s", 54, 26, 10, 8, 10);
+            ValBox(Fmt("%d", 1 + (int)roundf(gSl[gi] * 9.f)), "s", 60, 30, 13, 11, 10);
         }
         Clay_ElementId sid = CLAY_IDI("Dur", gi);
         Bs bs = Interact(sid);
         SliderLogic(sid, gi, 7.f);
-        CLAY(sid, {.layout = {.sizing = {GROW, FIX(18)}},
+        CLAY(sid, {.layout = {.sizing = {GROW, FIX(20)}},
                    .custom = {.customData = NC(K_SLIDER, RGB(40, 42, 48), RGB(40, 42, 48), C_CARD, gSl[gi],
                                                (bs.hover + (gSlDrag[gi] ? 1.f : 0.f)) * 1.5f, 0)}}) {}
     }
@@ -1009,50 +1107,65 @@ static void AudioView(void) {
     float sf = maxS > 1.f && cb.height > 1.f ? vb.height / cb.height : 1.f;
 
     CLAY(CLAY_ID("AudioHead"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 6, 0}, .childGap = 10, .childAlignment = AL_Y}}) {
-        Icon(I_NOTE, 20, C_DIM);
-        Tx("Audio", 16, C_TEXT, 1);
+        Icon(I_NOTE, 22, C_DIM);
+        Tx("Audio", 18, C_TEXT, 1);
     }
     CLAY(CLAY_ID("AudioBody"), {.layout = {.sizing = {GROW, GROW}, .childGap = 6}}) {
         CLAY(CLAY_ID("AudioScroll"), {.layout = {.sizing = {GROW, GROW}},
                                       .clip = {.vertical = true, .childOffset = {0, -gAudS}}}) {
-            CLAY(CLAY_ID("AudioContent"), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 10, .padding = {0, 0, 0, 12}}}) {
-                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) { KnobGroup(0, "Volume", "100 %"); }
-                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .padding = {22, 22, 0, 0}}}) { KnobGroup(1, "Pan", "0"); HSPACE KnobGroup(2, "Bass", "0 dB"); }
-                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) { KnobGroup(3, "Treble", "0 dB"); }
-                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .padding = {0, 0, 14, 4}, .childGap = 40, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
+            CLAY(CLAY_ID("AudioContent"), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 10, .padding = {0, 0, 0, 16}}}) {
+                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) { KnobGroup(0, "Volume"); }
+                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .padding = {20, 20, 0, 0}}}) { KnobGroup(1, "Pan"); HSPACE KnobGroup(2, "Bass"); }
+                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) { KnobGroup(3, "Treble"); }
+                CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .padding = {0, 0, 14, 4}, .childGap = 26, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
                     SwitchItem(0, "Fade In"); SwitchItem(1, "Fade Out");
                 }
                 DurRow(40, "Fade In Duration");
                 DurRow(41, "Fade Out Duration");
             }
         }
-        CLAY(CLAY_ID("AudioBar"), {.layout = {.sizing = {CLAY_SIZING_FIXED(3), GROW}},
+        CLAY(CLAY_ID("AudioBar"), {.layout = {.sizing = {CLAY_SIZING_FIXED(4), GROW}},
                                    .custom = {.customData = NC(K_SCROLLBAR, C_CARD, C_CARD, C_CARD, sv, sf, 0)}}) {}
     }
 }
 
 static void LeftPanel(void) {
-    CLAY(CLAY_ID("Library"), {.layout = {COLM, .sizing = {FIX(286), GROW}, .padding = {13, 13, 12, 12}, .childGap = 12}, PANEL}) {
+    /* tab-switch transition (fade + slide), measured from last frame */
+    gLTabT = fminf(1.f, gLTabT + gDt / 0.22f);
+    gLTabE = EaseIO(gLTabT);
+    Clay_BoundingBox lb = Clay_GetElementData(CLAY_ID("LibBody")).boundingBox;
+    gLFadeR = (Rectangle){lb.x, lb.y, lb.width, lb.height};
+    gLFadeA = (1.f - gLTabE) * 255.f;
+    float pill = Anim(CLAY_ID("LibPillAnim").id, (float)gLeftTab, 20.f);
+
+    CLAY(CLAY_ID("Library"), {.layout = {COLM, .sizing = {CLAY_SIZING_FIXED(gLeftW), GROW}, .padding = {13, 13, 13, 12}, .childGap = 13}, PANEL}) {
         CLAY(CLAY_ID("LibHead"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 0, 0}, .childGap = 10, .childAlignment = AL_Y}}) {
-            Icon(I_LIBRARY, 20, C_DIM);
-            Tx("Library", 16, C_TEXT, 1);
+            Icon(I_LIBRARY, 22, C_DIM);
+            Tx("Library", 18, C_TEXT, 1);
             HSPACE
             Clay_ElementId imp = CLAY_ID("Import");
             Bs b = Interact(imp);
-            CLAY(imp, {.layout = {.sizing = {FIT, FIX(30)}, .padding = {12, 14, 0, 0}, .childGap = 6, .childAlignment = AL_Y},
-                       .backgroundColor = BtnBg(RGB(28, 29, 34), RGB(40, 42, 48), b), .cornerRadius = CLAY_CORNER_RADIUS(10),
+            CLAY(imp, {.layout = {.sizing = {FIT, FIX(34)}, .padding = {13, 15, 0, 0}, .childGap = 7, .childAlignment = AL_Y},
+                       .backgroundColor = BtnBg(RGB(28, 29, 34), RGB(40, 42, 48), b), .cornerRadius = CLAY_CORNER_RADIUS(11),
                        .border = {.color = Mix(RGB(38, 40, 46), RGB(66, 68, 76), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
-                Icon(I_PLUS, 12, C_DIM);
-                Tx("Import", 12, C_TEXT, 0);
+                Icon(I_PLUS, 14, C_DIM);
+                Tx("Import", 14, C_TEXT, 0);
             }
         }
-        CLAY(CLAY_ID("LibTabs"), {.layout = {.sizing = {GROW, FIX(34)}, .padding = CLAY_PADDING_ALL(4), .childGap = 4},
-                                  .backgroundColor = C_SEG, .cornerRadius = CLAY_CORNER_RADIUS(13),
-                                  .border = {.color = RGB(30, 32, 37), .width = CLAY_BORDER_OUTSIDE(1)}}) {
-            if (TabBtn(CLAY_IDI("LibTab", 0), "Media", gLeftTab == 0, 12, 10, false)) gLeftTab = 0;
-            if (TabBtn(CLAY_IDI("LibTab", 1), "Audio", gLeftTab == 1, 12, 10, false)) gLeftTab = 1;
+        /* sliding-pill segmented control (shares K_PILL with the right panel, 2 tabs) */
+        CLAY(CLAY_ID("LibTabs"), {.layout = {.sizing = {GROW, FIX(42)}, .padding = CLAY_PADDING_ALL(4), .childGap = 4},
+                                  .cornerRadius = CLAY_CORNER_RADIUS(14),
+                                  .custom = {.customData = NC(K_PILL, C_CARD, C_CARD, C_CARD, pill, 0, 2)}}) {
+            for (int i = 0; i < 2; i++) {
+                if (TabBtn(CLAY_IDI("LibTab", i), i == 0 ? "Media" : "Audio", gLeftTab == i, 14, 11, true) && gLeftTab != i) {
+                    gLeftTab = i; gAudS = gAudT = 0.f; gLTabT = 0.f; gLTabE = 0.f;
+                }
+            }
         }
-        if (gLeftTab == 0) MediaView(); else AudioView();
+        CLAY(CLAY_ID("LibBody"), {.layout = {COLM, .sizing = {GROW, GROW}},
+                                  .clip = {.vertical = true, .childOffset = {0, (1.f - gLTabE) * 14.f}}}) {
+            if (gLeftTab == 0) MediaView(); else AudioView();
+        }
     }
 }
 
@@ -1668,7 +1781,7 @@ static void RightPanel(void) {
     static const int icons[4] = {I_CROP, I_PALETTE, I_SUN, I_TEXT};
     float pill = Anim(CLAY_ID("PillAnim").id, (float)gRightTab, 20.f);
     bool fitBody = (gRightTab == 3);
-    CLAY(CLAY_ID("Right"), {.layout = {COLM, .sizing = {FIX(374), GROW}, .childGap = 10}}) {
+    CLAY(CLAY_ID("Right"), {.layout = {COLM, .sizing = {CLAY_SIZING_FIXED(gRightW), GROW}, .childGap = 10}}) {
         /* tab bar: 54 tall = 6 pad + 42 track (4 pad + 34 pill + 4 pad) + 6 pad */
         CLAY(CLAY_ID("InspTabs"), {.layout = {.sizing = {GROW, FIX(54)}, .padding = CLAY_PADDING_ALL(6)}, RPANEL_R(18)}) {
             CLAY(CLAY_ID("InspSeg"), {.layout = {.sizing = {GROW, GROW}, .padding = CLAY_PADDING_ALL(4), .childGap = 4},
@@ -1705,7 +1818,7 @@ static void Timeline(void) {
     float bodyH = Clay_GetElementData(CLAY_ID("TimeBody")).boundingBox.height;
     float extra = fmaxf(0.f, bodyH - 26.f);
 
-    CLAY(CLAY_ID("Timeline"), {.layout = {COLM, .sizing = {GROW, FIX(284)}}, PANEL}) {
+    CLAY(CLAY_ID("Timeline"), {.layout = {COLM, .sizing = {GROW, CLAY_SIZING_FIXED(gTimeH)}}, PANEL}) {
         CLAY(CLAY_ID("TlBar"), {.layout = {.sizing = {GROW, FIX(52)}, .padding = {14, 12, 0, 0}, .childGap = 4, .childAlignment = AL_Y}}) {
             IconBtn(CLAY_ID("ToolPtr"),  I_POINTER,  36, 18, C_TEXT, true, 9);
             IconBtn(CLAY_ID("ToolHand"), I_HAND,     36, 18, C_DIM, false, 9);
@@ -1773,15 +1886,20 @@ static Clay_RenderCommandArray BuildUI(void) {
     gClayAutoId = 0;
     gFbN = 0;
     TickState();
+    UpdateSplits();
     UpdateInspScroll();
     Clay_BeginLayout();
-    CLAY(CLAY_ID("Root"), {.layout = {COLM, .sizing = {GROW, GROW}, .padding = {8, 8, 0, 12}, .childGap = 10}, .backgroundColor = C_BG}) {
+    CLAY(CLAY_ID("Root"), {.layout = {COLM, .sizing = {GROW, GROW}, .padding = {8, 8, 0, 12}}, .backgroundColor = C_BG}) {
         TopBar();
-        CLAY(CLAY_ID("Main"), {.layout = {.sizing = {GROW, GROW}, .childGap = 10}}) {
+        CLAY_AUTO_ID({.layout = {.sizing = {GROW, CLAY_SIZING_FIXED(10)}}}) {}
+        CLAY(CLAY_ID("Main"), {.layout = {.sizing = {GROW, GROW}}}) {
             LeftPanel();
+            Splitter(0);
             CenterPanel();
+            Splitter(1);
             RightPanel();
         }
+        Splitter(2);
         Timeline();
     }
     return Clay_EndLayout();
@@ -1910,7 +2028,7 @@ int main(void) {
         Clay_UpdateScrollContainers(false, (Clay_Vector2){0, GetMouseWheelMove() * 28.f}, gDt);
 
         if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) { gDragId = 0; gDragWheel = -1; }
-        gCustN = 0; gHand = false; gCross = false;
+        gCustN = 0; gHand = false; gCross = false; gResize = 0;
         Clay_RenderCommandArray cmds = BuildUI();
 
         if (gWindowAction == 1) MinimizeWindow();
@@ -1926,7 +2044,8 @@ int main(void) {
         ClearBackground((Color){14, 15, 17, 255});
         RenderUI(cmds);
         EndDrawing();
-        SetMouseCursor(gCross ? MOUSE_CURSOR_CROSSHAIR : gHand ? MOUSE_CURSOR_POINTING_HAND : MOUSE_CURSOR_DEFAULT);
+        SetMouseCursor(gResize == 1 ? MOUSE_CURSOR_RESIZE_EW : gResize == 2 ? MOUSE_CURSOR_RESIZE_NS :
+                       gCross ? MOUSE_CURSOR_CROSSHAIR : gHand ? MOUSE_CURSOR_POINTING_HAND : MOUSE_CURSOR_DEFAULT);
     }
     CloseWindow();
     return 0;
