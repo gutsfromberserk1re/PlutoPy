@@ -674,21 +674,41 @@ static void DrawCustom(Cust *cu, Rectangle r) {
     } break;
 
     case K_SLIDER: {
-        /* i bit0 = big, bit1 = gradient (a -> b), bit2 = rainbow */
-        bool big = cu->i & 1, grad = cu->i & 2, rainbow = cu->i & 4;
-        float th = big ? 5.f : 4.f, kr = big ? 7.5f : 7.f;
+        /* i bit0 = big, bit1 = gradient (a -> b), bit2 = rainbow,
+           bit3 = progress fill from the CENTRE (bipolar), bit4 = 3-stop gradient (a -> c -> b).
+           No gradient bits: dark track (a) + progress fill (b) from the left. */
+        bool big = cu->i & 1, grad = cu->i & 2, rainbow = cu->i & 4, bip = cu->i & 8, tri = cu->i & 16;
+        float th = big ? 6.f : 4.f, kr = big ? 8.5f : 7.f;
         float cy = r.y + r.height / 2;
         Rectangle tr = {r.x, cy - th / 2, r.width, th};
+        Rectangle gr = {tr.x + th / 2, tr.y, tr.width - th, th};      /* gradient body, caps are round */
         if (rainbow) {
             Color cs[7] = {{240,60,60,255},{240,220,60,255},{60,220,90,255},{60,220,230,255},{70,100,250,255},{230,70,230,255},{240,60,60,255}};
-            float sw = tr.width / 6.f;
+            float sw = gr.width / 6.f;
             for (int i = 0; i < 6; i++)
-                DrawRectangleGradientH((int)(tr.x + sw * i), (int)tr.y, (int)ceilf(sw), (int)th, cs[i], cs[i + 1]);
+                DrawRectangleGradientH((int)(gr.x + sw * i), (int)gr.y, (int)ceilf(sw), (int)th, cs[i], cs[i + 1]);
+            DrawCircleV((Vector2){gr.x, cy}, th / 2, cs[0]);
+            DrawCircleV((Vector2){gr.x + gr.width, cy}, th / 2, cs[6]);
         } else if (grad) {
-            DrawRectangleGradientH((int)tr.x, (int)tr.y, (int)tr.width, (int)th, RC(cu->a), RC(cu->b));
+            Color ca = RC(cu->a), cb = RC(cu->b), cm = RC(cu->c);
+            if (tri) {
+                int hw = (int)(gr.width / 2);
+                DrawRectangleGradientH((int)gr.x, (int)gr.y, hw, (int)th, ca, cm);
+                DrawRectangleGradientH((int)gr.x + hw, (int)gr.y, (int)(gr.width - hw), (int)th, cm, cb);
+            } else {
+                DrawRectangleGradientH((int)gr.x, (int)gr.y, (int)gr.width, (int)th, ca, cb);
+            }
+            DrawCircleV((Vector2){gr.x, cy}, th / 2, ca);
+            DrawCircleV((Vector2){gr.x + gr.width, cy}, th / 2, cb);
         } else {
             FillRR(tr, th / 2, RC(cu->a));
-            FillRR((Rectangle){r.x, cy - th / 2, kr + (r.width - 2 * kr) * cu->v, th}, th / 2, RC(cu->b));
+            float kx = kr + (r.width - 2 * kr) * cu->v;
+            if (bip) {
+                float cx = r.width / 2.f, x0 = fminf(cx, kx), x1 = fmaxf(cx, kx);
+                if (x1 - x0 > .5f) FillRR((Rectangle){r.x + x0, cy - th / 2, x1 - x0, th}, th / 2, RC(cu->b));
+            } else {
+                FillRR((Rectangle){r.x, cy - th / 2, kx, th}, th / 2, RC(cu->b));
+            }
         }
         Vector2 kc = {r.x + kr + (r.width - 2 * kr) * cu->v, cy};
         DrawCircleV((Vector2){kc.x, kc.y + 1.f}, kr + cu->f + 1.f, (Color){0, 0, 0, 70});
@@ -1084,7 +1104,7 @@ static void DurRow(int gi, const char *label) {
         Bs bs = Interact(sid);
         SliderLogic(sid, gi, 7.f);
         CLAY(sid, {.layout = {.sizing = {GROW, FIX(16)}},
-                   .custom = {.customData = NC(K_SLIDER, RGB(40, 42, 48), RGB(40, 42, 48), C_CARD, gSl[gi],
+                   .custom = {.customData = NC(K_SLIDER, RGB(40, 42, 48), RGB(150, 152, 160), C_CARD, gSl[gi],
                                                (bs.hover + (gSlDrag[gi] ? 1.f : 0.f)) * 1.5f, 0)}}) {}
     }
 }
@@ -1487,9 +1507,9 @@ static void TransformView(void) {
             }
             Clay_ElementId sid = CLAY_ID("OpacitySlider");
             Bs b = Interact(sid);
-            SliderLogic(sid, 0, 7.5f);
+            SliderLogic(sid, 0, 8.5f);
             CLAY(sid, {.layout = {.sizing = {GROW, FIX(26)}},
-                       .custom = {.customData = NC(K_SLIDER, RGB(43, 44, 49), RGB(43, 44, 49), C_CARD, gSl[0], (b.hover + (gSlDrag[0] ? 1.f : 0.f)) * 1.5f, 1)}}) {}
+                       .custom = {.customData = NC(K_SLIDER, RGB(38, 39, 43), RGB(150, 152, 160), C_CARD, gSl[0], (b.hover + (gSlDrag[0] ? 1.f : 0.f)) * 1.5f, 1)}}) {}
         }
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, CLAY_SIZING_GROW(10)}}}) {}   /* min 10px, grows when the window is taller */
         NavSection();
@@ -1554,28 +1574,27 @@ static void AccHeader(int idx, const char *title, int icon, float openAnim, bool
 static const char *kSliderNames[5][8] = {
     {0}, {"Hue", "Saturation", "Lightness"},
     {"Exposure", "Brightness", "Contrast", "Highlights", "Shadows", "Whites", "Blacks"},
-    {"Temperature", "Tint", "Saturation"}, {"Sharpness", "Clarity", "Vignette"}
+    {"Temperature", "Vibrance", "Saturation"}, {"Sharpness", "Clarity", "Vignette"}
 };
 /* last measured body heights (fallbacks until first measure) */
 static float gAccH[5] = {250.f, 270.f, 410.f, 190.f, 190.f};
 
-static void SliderSpec(int idx, int s, int *mode, Clay_Color *a, Clay_Color *b) {
-    *mode = 0; *a = RGB(43, 44, 49); *b = *a;
-    if (idx == 1) {
+static void SliderSpec(int idx, int s, int *mode, Clay_Color *a, Clay_Color *b, Clay_Color *c) {
+    /* default for every plain slider: dark track + light progress bar from the centre to the knob */
+    *mode = 8; *a = RGB(38, 39, 43); *b = RGB(150, 152, 160); *c = *b;
+    if (idx == 4 && s == 0) *mode = 0;                 /* Sharpness is 0..100: progress from the left */
+    if (idx == 1) {                                    /* HSL keeps its colour bars */
         if (s == 0) *mode = 4;
         else if (s == 1) { *mode = 2; *a = RGB(96, 96, 102); *b = RGB(236, 64, 80); }
         else             { *mode = 2; *a = RGB(8, 8, 10);    *b = RGB(240, 240, 244); }
-    } else if (idx == 3) {
-        *mode = 2;
-        if (s == 0)      { *a = RGB(70, 130, 230); *b = RGB(240, 170, 70); }
-        else if (s == 1) { *a = RGB(70, 200, 120); *b = RGB(220, 70, 190); }
-        else             { *a = RGB(110, 110, 116); *b = RGB(236, 64, 80); }
+    } else if (idx == 3 && s == 0) {                   /* Temperature: blue -> white -> orange */
+        *mode = 2 | 16; *a = RGB(66, 134, 238); *c = RGB(226, 228, 236); *b = RGB(246, 170, 56);
     }
 }
 
 static void SliderRow(int idx, int s) {
-    int gi = idx * 8 + s, mode; Clay_Color a, b;
-    SliderSpec(idx, s, &mode, &a, &b);
+    int gi = idx * 8 + s, mode; Clay_Color a, b, c;
+    SliderSpec(idx, s, &mode, &a, &b, &c);
     bool uni = (idx == 4 && s == 0);
     int val = uni ? (int)roundf(gSl[gi] * 100.f) : (int)roundf((gSl[gi] - .5f) * 200.f);
     CLAY(CLAY_IDI("SRow", gi), {.layout = {COLM, .sizing = {GROW, FIT}, .childGap = 5}}) {
@@ -1586,9 +1605,9 @@ static void SliderRow(int idx, int s) {
         }
         Clay_ElementId sid = CLAY_IDI("Slid", gi);
         Bs bs = Interact(sid);
-        SliderLogic(sid, gi, 7.5f);
+        SliderLogic(sid, gi, 8.5f);
         CLAY(sid, {.layout = {.sizing = {GROW, FIX(14)}},
-                   .custom = {.customData = NC(K_SLIDER, a, b, C_CARD, gSl[gi], (bs.hover + (gSlDrag[gi] ? 1.f : 0.f)) * 1.5f, 1 | mode)}}) {}
+                   .custom = {.customData = NC(K_SLIDER, a, b, c, gSl[gi], (bs.hover + (gSlDrag[gi] ? 1.f : 0.f)) * 1.5f, 1 | mode)}}) {}
     }
 }
 
@@ -1615,7 +1634,8 @@ static void Accordion(int idx, const char *title, int icon) {
     int n = 0;
     if (idx > 0) while (n < 7 && kSliderNames[idx][n]) n++;
     bool modified = false;
-    if (idx == 0) for (int i = 0; i < 3; i++) if (fabsf(gWhT[i].x) + fabsf(gWhT[i].y) > 0.02f) modified = true;
+    if (idx == 0) { for (int i = 0; i < 3; i++) if (fabsf(gWhT[i].x) + fabsf(gWhT[i].y) > 0.02f) modified = true; }
+    else for (int s2 = 0; s2 < n; s2++) if (fabsf(gSlT[idx * 8 + s2] - SlDefault(idx * 8 + s2)) > 0.01f) modified = true;
     CLAY(CLAY_IDI("AccCol", idx), {.layout = {COLM, .sizing = {GROW, FIT}}}) {
         AccHeader(idx, title, icon, o, modified);
         if (wrapH >= 1.f) {
@@ -1844,7 +1864,7 @@ static void Timeline(void) {
             IconBtn(CLAY_ID("ZoomOut"), I_ZOOM_OUT, 28, 16, C_DIM, false, 8);
             Clay_ElementId zid = CLAY_ID("ZoomSlider");
             Bs zb = Interact(zid);
-            CLAY(zid, {.layout = {.sizing = {FIX(125), FIX(20)}}, .custom = {.customData = NC(K_SLIDER, RGB(48, 50, 57), RGB(48, 50, 57), C_CARD, .24f, zb.hover * 1.5f, 0)}}) {}
+            CLAY(zid, {.layout = {.sizing = {FIX(125), FIX(20)}}, .custom = {.customData = NC(K_SLIDER, RGB(48, 50, 57), RGB(150, 152, 160), C_CARD, .24f, zb.hover * 1.5f, 0)}}) {}
             IconBtn(CLAY_ID("ZoomIn"), I_ZOOM_IN, 28, 16, C_DIM, false, 8);
             GAPX(12)
             Clay_ElementId mid = CLAY_ID("Snap");
