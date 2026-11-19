@@ -219,6 +219,24 @@ static float AnimLin(uint32_t key, float target, float dur) {
 }
 static float EaseIO(float t) { if (t < 0) t = 0; if (t > 1) t = 1; return t * t * (3.f - 2.f * t); }
 
+static float *AnimPtr(uint32_t key, float init) {
+    for (int i = 0; i < 2048; i++)
+        if (gAnim[i].used && gAnim[i].id == key) return &gAnim[i].v;
+    for (int i = 0; i < 2048; i++)
+        if (!gAnim[i].used) { gAnim[i].used = true; gAnim[i].id = key; gAnim[i].v = init; return &gAnim[i].v; }
+    static float dummy; dummy = init; return &dummy;
+}
+
+/* damped spring: k = stiffness, d = damping (lower d = bouncier) */
+static float Spring(uint32_t key, float target, float k, float d) {
+    float *p = AnimPtr(key ^ 0x7F4A7C15u, target);
+    float *v = AnimPtr(key ^ 0x2545F491u, 0.f);
+    int n = (int)ceilf(gDt / 0.004f); if (n < 1) n = 1;
+    float h = gDt / n;
+    for (int i = 0; i < n; i++) { *v += (k * (target - *p) - d * *v) * h; *p += *v * h; }
+    return *p;
+}
+
 static Clay_Color Mix(Clay_Color a, Clay_Color b, float t) {
     if (t < 0) t = 0;
     if (t > 1) t = 1;
@@ -1229,19 +1247,31 @@ static void AccHeader(int idx, const char *title, int icon, float openAnim, bool
         if (gOpenAcc == idx) { gOpenAcc = -1; gFollow = false; }
         else { gOpenAcc = idx; gFollow = (idx >= 3); }
     }
-    CLAY(id, {.layout = {.sizing = {GROW, FIX(52)}, .padding = {16, 14, 0, 0}, .childGap = 12, .childAlignment = AL_Y},
-              .backgroundColor = BtnBg(Mix(C_RCARD, RGB(33, 34, 38), openAnim), Mix(RGB(36, 37, 43), RGB(40, 41, 47), openAnim), b), .cornerRadius = CLAY_CORNER_RADIUS(18),
-              .border = {.color = Mix(Mix(C_RCARDB, RGB(62, 64, 72), openAnim), RGB(84, 87, 96), fmaxf(b.hover * 0.7f, b.press)), .width = CLAY_BORDER_OUTSIDE(1)}}) {
-        Icon(icon, 22, C_ICON);
-        Tx(title, 18, C_TEXT, 0);
-        HSPACE
-        if (modified) {
-            CLAY_AUTO_ID({.layout = {.sizing = {FIX(6), FIX(6)}}, .backgroundColor = C_TEXT, .cornerRadius = CLAY_CORNER_RADIUS(3)}) {}
-            GAPX(2)
-        }
-        CLAY_AUTO_ID({.layout = {.sizing = {FIX(26), FIX(26)}, .childAlignment = AL_C}, .cornerRadius = CLAY_CORNER_RADIUS(13),
-                      .border = {.color = Mix(RGB(74, 77, 85), RGB(130, 134, 144), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
-            IconV(I_PLUS, 13, C_DIM, 1.f - openAnim);
+
+    /* press-squash: shrinks while held, springs back on release */
+    bool down = Clay_PointerOver(id) && IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+    float sq = Spring(id.id, down ? 1.f : 0.f, 700.f, 26.f);
+    sq = sq < 0.f ? 0.f : sq > 1.2f ? 1.2f : sq;
+    int px = (int)roundf(sq * 4.f), py = (int)roundf(sq * 1.5f);
+
+    CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIX(52)}, .padding = {px, px, py, py}}}) {
+        CLAY(id, {.layout = {.sizing = {GROW, GROW}, .padding = {16, 14, 0, 0}, .childGap = 12, .childAlignment = AL_Y},
+                  /* hover only, no press flash */
+                  .backgroundColor = Mix(Mix(C_RCARD, RGB(33, 34, 38), openAnim), Mix(RGB(36, 37, 43), RGB(40, 41, 47), openAnim), b.hover),
+                  .cornerRadius = CLAY_CORNER_RADIUS(18),
+                  .border = {.color = Mix(Mix(C_RCARDB, RGB(62, 64, 72), openAnim), RGB(84, 87, 96), b.hover * 0.7f),
+                             .width = CLAY_BORDER_OUTSIDE(1)}}) {
+            Icon(icon, 22, C_ICON);
+            Tx(title, 18, C_TEXT, 0);
+            HSPACE
+            if (modified) {
+                CLAY_AUTO_ID({.layout = {.sizing = {FIX(6), FIX(6)}}, .backgroundColor = C_TEXT, .cornerRadius = CLAY_CORNER_RADIUS(3)}) {}
+                GAPX(2)
+            }
+            CLAY_AUTO_ID({.layout = {.sizing = {FIX(26), FIX(26)}, .childAlignment = AL_C}, .cornerRadius = CLAY_CORNER_RADIUS(13),
+                          .border = {.color = Mix(RGB(74, 77, 85), RGB(130, 134, 144), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+                IconV(I_PLUS, 13, C_DIM, 1.f - openAnim);
+            }
         }
     }
 }
