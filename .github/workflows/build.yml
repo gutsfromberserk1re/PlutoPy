@@ -1,4 +1,3 @@
-
 name: Build UI
 
 on:
@@ -18,20 +17,49 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+          cache: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-ccache
+
+      - name: Cache raylib and clay sources
+        id: deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            raylib-src
+            clay.h
+          key: deps-raylib-6.2-clay-v0.14
 
       - name: Download Clay header
+        if: steps.deps.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri "https://raw.githubusercontent.com/nicbarker/clay/v0.14/clay.h" -OutFile "clay.h"
 
       - name: Download raylib
+        if: steps.deps.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           git clone --depth 1 --branch 6.2 https://github.com/raysan5/raylib.git raylib-src
 
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-raylib-6.2-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-raylib-6.2-
+
       - name: Build UI
         shell: msys2 {0}
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_COMPRESS: "1"
+          CCACHE_MAXSIZE: 200M
         run: |
           set -euo pipefail
 
@@ -82,11 +110,16 @@ jobs:
           )
           CMAKE
 
+          ccache --zero-stats
+
           cmake -S ci-build -B ci-build/out -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DUI_SOURCE_FILE="$SOURCE"
 
           cmake --build ci-build/out --parallel
+
+          ccache --show-stats
 
           test -f ci-build/out/dist/UI.exe
 
