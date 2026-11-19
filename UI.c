@@ -22,19 +22,34 @@
  * glyph shapes of the reference. Font sizes are normalised, so any font renders at the
  * same size.
  */
-#define CLAY_IMPLEMENTATION
-#include "clay.h"
-#include "raylib.h"
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#define Rectangle    Win32Rectangle
+#define CloseWindow  Win32CloseWindow
+#define ShowCursor   Win32ShowCursor
+#define Arc          Win32Arc
+#define DrawText     Win32DrawText
+#define DrawTextEx   Win32DrawTextEx
+#define LoadImage    Win32LoadImage
+#define PlaySound    Win32PlaySound
 #include <windows.h>
 #include <windowsx.h>
-#ifdef RGB
+#undef Rectangle
+#undef CloseWindow
+#undef ShowCursor
+#undef Arc
+#undef DrawText
+#undef DrawTextEx
+#undef LoadImage
+#undef PlaySound
 #undef RGB
 #endif
-#endif
+
+#define CLAY_IMPLEMENTATION
+#include "clay.h"
+#include "raylib.h"
 
 /* ------------------------------------------------------------------ */
 /* Compatibility helpers: legacy CLAY(id, { config }) call style       */
@@ -302,7 +317,7 @@ static bool IconBtn(Clay_ElementId id, int icon, float box, float isz, Clay_Colo
 }
 
 static void WindowButton(const char *key, int icon) {
-    Clay_ElementId id = CLAY_ID(key);
+    Clay_ElementId id = CLAY_SIDI(S(key), 0);
     Bs b = Interact(id);
     Clay_Color bg = icon == I_CLOSE
         ? Mix(RGBA(0, 0, 0, 0), RGB(190, 48, 56), b.hover)
