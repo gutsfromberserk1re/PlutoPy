@@ -56,7 +56,7 @@ static Clay_ElementDeclaration ClayCompatDeclaration(
 /* ------------------------------------------------------------------ */
 #define RGB(r,g,b)     ((Clay_Color){r,g,b,255})
 #define RGBA(r,g,b,a)  ((Clay_Color){r,g,b,a})
-#define C_BG        RGB(14,15,17)
+#define C_BG        RGB(11,11,13)
 #define C_PANEL     RGB(23,24,28)
 #define C_PBORDER   RGB(36,38,43)
 #define C_CARD      RGB(30,31,36)
@@ -69,6 +69,15 @@ static Clay_ElementDeclaration ClayCompatDeclaration(
 #define C_MUTED     RGB(138,142,152)
 #define C_ACCENT    RGB(64,120,255)
 #define C_ROW       RGB(19,20,24)
+/* right-panel palette (sampled from the reference) */
+#define C_PGRAD     RGB(27,28,31)   /* sentinel: drawn as a vertical gradient 27,28,31 -> 21,22,24 */
+#define C_RCARD     RGB(24,25,28)
+#define C_RCARDB    RGB(35,36,40)
+#define C_RFIELD    RGB(33,34,38)
+#define RPANEL      .backgroundColor = C_PGRAD, .cornerRadius = CLAY_CORNER_RADIUS(16), \
+                    .border = {.color = RGB(35,36,38), .width = CLAY_BORDER_OUTSIDE(1)}
+#define RCARD       .backgroundColor = C_RCARD, .cornerRadius = CLAY_CORNER_RADIUS(14), \
+                    .border = {.color = C_RCARDB, .width = CLAY_BORDER_OUTSIDE(1)}
 
 /* ------------------------------------------------------------------ */
 /* small layout shorthands                                             */
@@ -213,15 +222,18 @@ static bool IconBtn(Clay_ElementId id, int icon, float box, float isz, Clay_Colo
 
 static bool TabBtn(Clay_ElementId id, const char *label, bool sel, float size, float rad, bool border) {
     Bs b = Interact(id);
-    float s = Anim(id.id + 7, sel ? 1.f : 0.f, 16.f);
-    float a = fmaxf(s * 255.f, b.hover * (1.f - s) * 90.f);
-    Clay_Color bg = Dark(RGBA(46, 48, 55, a), b.press * 0.3f);
+    float s = Anim(id.id + 7, sel ? 1.f : 0.f, 45.f);
+    float a = fmaxf(s * 255.f, b.hover * (1.f - s) * 60.f);
+    Clay_Color fill = border ? RGB(42, 43, 49) : RGB(46, 48, 55);
+    Clay_Color bg = Dark(RGBA(fill.r, fill.g, fill.b, a), b.press * 0.3f);
+    Clay_Color off = border ? RGB(112, 116, 128) : C_MUTED;
     CLAY(id, {.layout = {.sizing = {GROW, GROW}, .childAlignment = AL_C},
               .backgroundColor = bg, .cornerRadius = CLAY_CORNER_RADIUS(rad),
-              .border = {.color = RGBA(72, 75, 85, border ? s * 255.f : 0.f), .width = CLAY_BORDER_OUTSIDE(1)}}) {
-        Tx(label, size, Mix(C_MUTED, C_TEXT, fmaxf(s, b.hover * 0.6f)), 0);
+              .border = {.color = RGBA(55, 56, 62, border ? s * 255.f : 0.f), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+        Tx(label, size, Mix(off, C_TEXT, fmaxf(s, b.hover * 0.6f)), 0);
     }
-    return b.clicked;
+    /* select on press, not release, so it feels instant */
+    return Clay_PointerOver(id) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 }
 
 /* link / chain toggle with blue glow when linked */
@@ -521,7 +533,10 @@ static void RenderUI(Clay_RenderCommandArray cmds) {
         switch (rc->commandType) {
         case CLAY_RENDER_COMMAND_TYPE_RECTANGLE: {
             Clay_RectangleRenderData *d = &rc->renderData.rectangle;
-            FillRR(r, d->cornerRadius.topLeft, RC(d->backgroundColor));
+            Clay_Color bc = d->backgroundColor;
+            if (bc.r == 27 && bc.g == 28 && bc.b == 31 && bc.a == 255)
+                GradRR(r, d->cornerRadius.topLeft, (Color){27, 28, 31, 255}, (Color){21, 22, 24, 255});
+            else FillRR(r, d->cornerRadius.topLeft, RC(bc));
         } break;
         case CLAY_RENDER_COMMAND_TYPE_BORDER: {
             Clay_BorderRenderData *d = &rc->renderData.border;
@@ -787,7 +802,7 @@ static void NumField(int n, const char *val, const char *unit) {
     Clay_ElementId id = CLAY_IDI("NumF", n);
     Bs b = Interact(id);
     CLAY(id, {.layout = {.sizing = {GROW, FIX(36)}, .padding = {10, 6, 0, 0}, .childGap = 5, .childAlignment = AL_Y},
-              .backgroundColor = Mix(C_FIELD, RGB(46, 47, 54), b.hover), .cornerRadius = CLAY_CORNER_RADIUS(10),
+              .backgroundColor = Mix(C_RFIELD, RGB(46, 47, 54), b.hover), .cornerRadius = CLAY_CORNER_RADIUS(10),
               .border = {.color = Mix(RGB(44, 46, 52), RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
         HSPACE
         Tx(val, 20, C_TEXT, 0);
@@ -804,7 +819,7 @@ static void MiniField(int n, const char *lab) {
     Clay_ElementId id = CLAY_IDI("MiniF", n);
     Bs b = Interact(id);
     CLAY(id, {.layout = {.sizing = {FIX(112), FIX(34)}, .padding = {10, 6, 0, 0}, .childGap = 4, .childAlignment = AL_Y},
-              .backgroundColor = Mix(C_FIELD, RGB(46, 47, 54), b.hover), .cornerRadius = CLAY_CORNER_RADIUS(9),
+              .backgroundColor = Mix(C_RFIELD, RGB(46, 47, 54), b.hover), .cornerRadius = CLAY_CORNER_RADIUS(9),
               .border = {.color = Mix(RGB(44, 46, 52), RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
         Tx(lab, 12, RGB(112, 124, 156), 1);
         HSPACE
@@ -818,7 +833,7 @@ static void MiniField(int n, const char *lab) {
 }
 
 static void FieldCard(int n, const char *title, int icon, const char *l1, const char *l2, const char *val, const char *unit, int link) {
-    CLAY(CLAY_IDI("FCard", n), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(12), .childGap = 8}, CARD}) {
+    CLAY(CLAY_IDI("FCard", n), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(12), .childGap = 8}, RCARD}) {
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 8, .childAlignment = AL_Y}}) {
             Icon(icon, 19, C_DIM);
             Tx(title, 18, C_TEXT, 1);
@@ -843,11 +858,11 @@ static void FieldCard(int n, const char *title, int icon, const char *l1, const 
 static bool NavButton(int n, int icon, const char *label, float open) {
     Clay_ElementId id = CLAY_IDI("Nav", n);
     Bs b = Interact(id);
-    Clay_Color base = Mix(C_CARD, RGB(42, 44, 51), open);
+    Clay_Color base = Mix(C_RCARD, RGB(42, 44, 51), open);
     Clay_Color hov  = Mix(RGB(38, 40, 46), RGB(48, 50, 58), open);
     CLAY(id, {.layout = {.sizing = {GROW, FIX(54)}, .padding = {14, 12, 0, 0}, .childGap = 10, .childAlignment = AL_Y},
               .backgroundColor = BtnBg(base, hov, b), .cornerRadius = CLAY_CORNER_RADIUS(14),
-              .border = {.color = Mix(C_CARDB, RGB(80, 83, 92), fmaxf(b.hover, open * 0.8f)), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+              .border = {.color = Mix(C_RCARDB, RGB(80, 83, 92), fmaxf(b.hover, open * 0.8f)), .width = CLAY_BORDER_OUTSIDE(1)}}) {
         Icon(icon, 22, Mix(C_DIM, C_TEXT, open));
         Tx(label, 18, C_TEXT, 0);
         HSPACE
@@ -861,7 +876,7 @@ static bool NavButton(int n, int icon, const char *label, float open) {
 
 static void CropBody(void) {
     CLAY(CLAY_ID("CropBody"), {.layout = {COLM, .sizing = {GROW, FIX(CROP_H)}, .padding = CLAY_PADDING_ALL(12), .childGap = 10,
-                                          .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}, CARD}) {
+                                          .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}, RCARD}) {
         MiniField(0, "T");
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = AL_Y}}) {
             MiniField(1, "L");
@@ -875,7 +890,7 @@ static void CropBody(void) {
 }
 
 static void DistortBody(void) {
-    CLAY(CLAY_ID("DistBody"), {.layout = {COLM, .sizing = {GROW, FIX(DIST_H)}, .padding = CLAY_PADDING_ALL(12), .childGap = 10}, CARD}) {
+    CLAY(CLAY_ID("DistBody"), {.layout = {COLM, .sizing = {GROW, FIX(DIST_H)}, .padding = CLAY_PADDING_ALL(12), .childGap = 10}, RCARD}) {
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}}}) { MiniField(4, "TL"); HSPACE MiniField(5, "TR"); }
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_CENTER}}}) {
             if (LinkBtn(CLAY_ID("LinkDist"), gLink[3], 30, 20)) gLink[3] = !gLink[3];
@@ -914,7 +929,7 @@ static void TransformView(void) {
         FieldCard(0, "Position", I_POS, "X", "Y", "0", "px", 0);
         FieldCard(1, "Scale", I_SCALE, "W", "H", "100", "%", 1);
     }
-    CLAY(CLAY_ID("RotCard"), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(12), .childGap = 6}, CARD}) {
+    CLAY(CLAY_ID("RotCard"), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(12), .childGap = 6}, RCARD}) {
         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childGap = 10, .childAlignment = AL_Y}}) {
             IconBtn(CLAY_ID("RotReset"), I_ROT, 34, 24, C_DIM, false, 17);
             Tx("Rotation", 18, C_TEXT, 0);
@@ -939,7 +954,7 @@ static void TransformView(void) {
         Clay_ElementId sid = CLAY_ID("OpacitySlider");
         Bs b = Interact(sid);
         CLAY(sid, {.layout = {.sizing = {GROW, FIX(18)}},
-                   .custom = {.customData = NC(K_SLIDER, RGB(52, 54, 61), RGB(88, 91, 100), C_CARD, 1.f, b.hover * 1.5f, 1)}}) {}
+                   .custom = {.customData = NC(K_SLIDER, RGB(52, 54, 61), RGB(52, 54, 61), C_CARD, 1.f, b.hover * 1.5f, 1)}}) {}
     }
     VSPACE
     NavSection();
@@ -960,8 +975,8 @@ static void AccHeader(int idx, const char *title, int icon, float openAnim) {
     Bs b = Interact(id);
     if (b.clicked) gAcc[idx] = !gAcc[idx];
     CLAY(id, {.layout = {.sizing = {GROW, FIX(52)}, .padding = {16, 14, 0, 0}, .childGap = 12, .childAlignment = AL_Y},
-              .backgroundColor = BtnBg(C_CARD, RGB(36, 37, 43), b), .cornerRadius = CLAY_CORNER_RADIUS(14),
-              .border = {.color = Mix(C_CARDB, RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+              .backgroundColor = BtnBg(C_RCARD, RGB(36, 37, 43), b), .cornerRadius = CLAY_CORNER_RADIUS(14),
+              .border = {.color = Mix(C_RCARDB, RGB(76, 79, 88), b.hover), .width = CLAY_BORDER_OUTSIDE(1)}}) {
         Icon(icon, 22, C_DIM);
         Tx(title, 18, C_TEXT, 0);
         HSPACE
@@ -992,7 +1007,7 @@ static void Accordion(int idx, const char *title, int icon) {
         if (wrapH >= 1.f) {
             CLAY(CLAY_IDI("AccWrap", idx), {.layout = {COLM, .sizing = {GROW, FIX(wrapH)}}, .clip = {.vertical = true}}) {
                 CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIX(10)}}}) {}
-                CLAY(CLAY_IDI("AccBody", idx), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(12), .childGap = 12}, CARD}) {
+                CLAY(CLAY_IDI("AccBody", idx), {.layout = {COLM, .sizing = {GROW, FIT}, .padding = CLAY_PADDING_ALL(12), .childGap = 12}, RCARD}) {
                     if (idx == 0) {
                         CLAY_AUTO_ID({.layout = {.sizing = {GROW, FIT}, .childAlignment = {.x = CLAY_ALIGN_X_RIGHT}}}) {
                             Clay_ElementId rid = CLAY_ID("ResetGrade");
@@ -1012,7 +1027,7 @@ static void Accordion(int idx, const char *title, int icon) {
                                 Clay_ElementId sid = CLAY_IDI("Slid", idx * 8 + s);
                                 Bs b = Interact(sid);
                                 CLAY(sid, {.layout = {.sizing = {GROW, FIX(18)}},
-                                           .custom = {.customData = NC(K_SLIDER, RGB(52, 54, 61), RGB(88, 91, 100), C_CARD, .5f, b.hover * 1.5f, 1)}}) {}
+                                           .custom = {.customData = NC(K_SLIDER, RGB(52, 54, 61), RGB(60, 62, 70), C_CARD, .5f, b.hover * 1.5f, 1)}}) {}
                             }
                         }
                     }
@@ -1064,17 +1079,17 @@ static void RightPanel(void) {
     static const int icons[4] = {I_CROP, I_PALETTE, I_SUN, I_TEXT};
     CLAY(CLAY_ID("Right"), {.layout = {COLM, .sizing = {FIX(374), GROW}, .childGap = 10}}) {
         /* outer panel border + inner segmented container with its own border */
-        CLAY(CLAY_ID("InspTabs"), {.layout = {.sizing = {GROW, FIX(56)}, .padding = CLAY_PADDING_ALL(5)}, PANEL}) {
+        CLAY(CLAY_ID("InspTabs"), {.layout = {.sizing = {GROW, FIX(56)}, .padding = CLAY_PADDING_ALL(5)}, RPANEL}) {
             CLAY(CLAY_ID("InspSeg"), {.layout = {.sizing = {GROW, GROW}, .padding = CLAY_PADDING_ALL(4), .childGap = 4},
-                                      .backgroundColor = C_SEG, .cornerRadius = CLAY_CORNER_RADIUS(12),
-                                      .border = {.color = RGB(40, 42, 48), .width = CLAY_BORDER_OUTSIDE(1)}}) {
+                                      .backgroundColor = RGB(10, 11, 13), .cornerRadius = CLAY_CORNER_RADIUS(12),
+                                      .border = {.color = RGB(24, 25, 28), .width = CLAY_BORDER_OUTSIDE(1)}}) {
                 for (int i = 0; i < 4; i++)
                     if (TabBtn(CLAY_IDI("InspTab", i), tabs[i], gRightTab == i, 16, 9, true)) {
                         if (gRightTab != i) { gRightTab = i; gScroll = gScrollT = 0.f; gFollow = false; }
                     }
             }
         }
-        CLAY(CLAY_ID("InspBody"), {.layout = {.sizing = {GROW, GROW}}, PANEL,
+        CLAY(CLAY_ID("InspBody"), {.layout = {.sizing = {GROW, GROW}}, RPANEL,
                                    .clip = {.vertical = true, .childOffset = {0, -gScroll}}}) {
             CLAY(CLAY_ID("InspContent"), {.layout = {COLM, .sizing = {GROW, CLAY_SIZING_FIT(gInspViewH)}, .padding = CLAY_PADDING_ALL(14), .childGap = 10}}) {
                 CLAY(CLAY_ID("InspTitle"), {.layout = {.sizing = {GROW, FIT}, .padding = {4, 0, 2, 4}, .childGap = 12, .childAlignment = AL_Y}}) {
